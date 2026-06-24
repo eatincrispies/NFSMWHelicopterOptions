@@ -28,31 +28,6 @@ LICENSE.txt
 .gitignore
 ```
 
-## Not included
-
-Do not upload or include these in the repo:
-
-```text
-.vs/
-Debug/
-Release/
-x86/
-x64/
-*.asi
-*.dll
-*.exe
-*.obj
-*.pdb
-*.lib
-*.exp
-*.ilk
-*.log
-speed.exe
-Ghidra dumps
-full decompiled game files
-crash dumps/logs with personal paths
-```
-
 ## Building with the batch file
 
 This mod is for the 32-bit PC version of NFSMW 2005, so it must be built as **Win32/x86**.
