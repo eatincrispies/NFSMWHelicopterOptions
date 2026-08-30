@@ -194,7 +194,7 @@ that file and the known-limitations notes.
 - Created by **eatincrispies / XeroAbsolute**.
 - The game-structure reference **NFSPluginSDK** by berkayylmao was used to
   cross-check several internal layouts.
-- Thanks to fierelier for MinGW Support and PSEH 
+- Thanks to fierelier for MinGW Support 
 - Thanks to the Need for Speed modding community for tools and documentation.
 
 No Electronic Arts source code or game assets are included. The mod only
