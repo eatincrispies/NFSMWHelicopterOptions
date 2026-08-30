@@ -1,3 +1,5 @@
+![Thumbnail](Thumbnail.webp)
+
 # NFSMW HelicopterOptions V2.2.1
 
 A police helicopter overhaul for **Need for Speed: Most Wanted (2005)**.
