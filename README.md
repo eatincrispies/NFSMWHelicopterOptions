@@ -42,3 +42,4 @@ Each section below is named after the game class it changes, which is also the n
 
 - `Eatincrispies` (Mod creator)
 - `Fierelier` - (MinGW support)
+- `Roskler` - (Testing the mod and reporting issues before release)
