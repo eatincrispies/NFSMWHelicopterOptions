@@ -5,28 +5,23 @@ rem Edit this path if your Visual Studio install is somewhere else.
 call "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x86 -host_arch=x64
 if errorlevel 1 goto :err
 
-cl /nologo /EHsc /O2 /W3 /DNDEBUG /DWIN32 /std:c++17 /LD ^
+cl /nologo /EHsc /O2 /W4 /DNDEBUG /DWIN32 /std:c++17 /LD ^
   HelicopterOptions\dllmain.cpp ^
-  HelicopterOptions\src\Core\Log.cpp ^
-  HelicopterOptions\src\Core\Memory.cpp ^
+  HelicopterOptions\src\Config\Ini.cpp ^
+  HelicopterOptions\src\Core\Detour.cpp ^
   HelicopterOptions\src\Core\ExeIdentity.cpp ^
   HelicopterOptions\src\Core\FrameTime.cpp ^
+  HelicopterOptions\src\Core\Log.cpp ^
+  HelicopterOptions\src\Core\Memory.cpp ^
   HelicopterOptions\src\Core\PatchManager.cpp ^
-  HelicopterOptions\src\Core\HookManager.cpp ^
-  HelicopterOptions\src\Config\Ini.cpp ^
-  HelicopterOptions\src\Config\Validation.cpp ^
-  HelicopterOptions\src\Game\HeliState.cpp ^
-  HelicopterOptions\src\Radio\HeliRadioChat.cpp ^
-  HelicopterOptions\src\Systems\AiCore.cpp ^
-  HelicopterOptions\src\Systems\HelicopterRegistry.cpp ^
-  HelicopterOptions\src\Systems\SkidAttack.cpp ^
-  HelicopterOptions\src\Systems\Movement.cpp ^
-  HelicopterOptions\src\Systems\SpeedRegulator.cpp ^
-  HelicopterOptions\src\Systems\Vision.cpp ^
-  HelicopterOptions\src\Systems\ExitBehavior.cpp ^
-  HelicopterOptions\src\Systems\HeliSheetControl.cpp ^
-  HelicopterOptions\src\Systems\Spawner.cpp ^
-  HelicopterOptions\src\Systems\Telemetry.cpp ^
+  HelicopterOptions\src\Game\AIActionHeliExit.cpp ^
+  HelicopterOptions\src\Game\AIActionHeliPursuit.cpp ^
+  HelicopterOptions\src\Game\AICopManager.cpp ^
+  HelicopterOptions\src\Game\AIPerpVehicle.cpp ^
+  HelicopterOptions\src\Game\AIVehicleHelicopter.cpp ^
+  HelicopterOptions\src\Game\HeliSheet.cpp ^
+  HelicopterOptions\src\Game\Interfaces.cpp ^
+  HelicopterOptions\src\Game\SimpleChopper.cpp ^
   /Fe:HelicopterOptions.asi user32.lib kernel32.lib
 if errorlevel 1 goto :err
 
