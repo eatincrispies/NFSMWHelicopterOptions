@@ -1,4 +1,4 @@
-![NFSMW HelicopterOptions Thumbnail](Thumbnail.webp)
+(Thumbnail.webp)
 
 # NFSMW HelicopterOptions
 
