@@ -1,6 +1,10 @@
 <Solution>
   <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="HelicopterOptions/HelicopterOptions.vcxproj" Id="8c1ed084-ee52-453b-a60f-d69eacc7440e" />
+  <Project Path="HelicopterOptions/HelicopterOptions.vcxproj" Id="8c1ed084-ee52-453b-a60f-d69eacc7440e">
+    <Platform Solution="*|x86" Project="Win32" />
+  </Project>
 </Solution>
