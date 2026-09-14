@@ -48,7 +48,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
@@ -63,7 +63,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <WarningLevel>Level3</WarningLevel>
+      <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
@@ -79,45 +79,42 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\Config\Config.h" />
+    <ClInclude Include="src\Config\Ini.h" />
     <ClInclude Include="src\Core\Addresses.h" />
-    <ClInclude Include="src\Core\Version.h" />
-    <ClInclude Include="src\Core\FrameTime.h" />
+    <ClInclude Include="src\Core\Detour.h" />
     <ClInclude Include="src\Core\ExeIdentity.h" />
-    <ClInclude Include="src\Core\HookManager.h" />
+    <ClInclude Include="src\Core\FrameTime.h" />
     <ClInclude Include="src\Core\Log.h" />
     <ClInclude Include="src\Core\Memory.h" />
     <ClInclude Include="src\Core\PatchManager.h" />
-    <ClInclude Include="src\Config\Config.h" />
-    <ClInclude Include="src\Config\Ini.h" />
-    <ClInclude Include="src\Config\Validation.h" />
-    <ClInclude Include="src\Game\HeliState.h" />
-    <ClInclude Include="src\Radio\HeliRadioChat.h" />
-    <ClInclude Include="src\Systems\AiCore.h" />
-    <ClInclude Include="src\Systems\HelicopterRegistry.h" />
-    <ClInclude Include="src\Systems\Systems.h" />
+    <ClInclude Include="src\Core\Version.h" />
+    <ClInclude Include="src\Game\AIActionHeliExit.h" />
+    <ClInclude Include="src\Game\AIActionHeliPursuit.h" />
+    <ClInclude Include="src\Game\AICopManager.h" />
+    <ClInclude Include="src\Game\AIPerpVehicle.h" />
+    <ClInclude Include="src\Game\AIVehicleHelicopter.h" />
+    <ClInclude Include="src\Game\HeliSheet.h" />
+    <ClInclude Include="src\Game\Interfaces.h" />
+    <ClInclude Include="src\Game\SimpleChopper.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="src\Config\Ini.cpp" />
+    <ClCompile Include="src\Core\Detour.cpp" />
     <ClCompile Include="src\Core\ExeIdentity.cpp" />
     <ClCompile Include="src\Core\FrameTime.cpp" />
-    <ClCompile Include="src\Core\HookManager.cpp" />
     <ClCompile Include="src\Core\Log.cpp" />
     <ClCompile Include="src\Core\Memory.cpp" />
     <ClCompile Include="src\Core\PatchManager.cpp" />
-    <ClCompile Include="src\Config\Ini.cpp" />
-    <ClCompile Include="src\Config\Validation.cpp" />
-    <ClCompile Include="src\Game\HeliState.cpp" />
-    <ClCompile Include="src\Radio\HeliRadioChat.cpp" />
-    <ClCompile Include="src\Systems\AiCore.cpp" />
-    <ClCompile Include="src\Systems\HelicopterRegistry.cpp" />
-    <ClCompile Include="src\Systems\ExitBehavior.cpp" />
-    <ClCompile Include="src\Systems\HeliSheetControl.cpp" />
-    <ClCompile Include="src\Systems\Movement.cpp" />
-    <ClCompile Include="src\Systems\SkidAttack.cpp" />
-    <ClCompile Include="src\Systems\Spawner.cpp" />
-    <ClCompile Include="src\Systems\SpeedRegulator.cpp" />
-    <ClCompile Include="src\Systems\Telemetry.cpp" />
-    <ClCompile Include="src\Systems\Vision.cpp" />
+    <ClCompile Include="src\Game\AIActionHeliExit.cpp" />
+    <ClCompile Include="src\Game\AIActionHeliPursuit.cpp" />
+    <ClCompile Include="src\Game\AICopManager.cpp" />
+    <ClCompile Include="src\Game\AIPerpVehicle.cpp" />
+    <ClCompile Include="src\Game\AIVehicleHelicopter.cpp" />
+    <ClCompile Include="src\Game\HeliSheet.cpp" />
+    <ClCompile Include="src\Game\Interfaces.cpp" />
+    <ClCompile Include="src\Game\SimpleChopper.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
