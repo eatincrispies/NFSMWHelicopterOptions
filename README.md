@@ -38,7 +38,7 @@ Each section below is named after the game class it changes, which is also the n
 
 - How far away from you it spawns.
 
-Permission:
+## Permission:
 
 You are welcome to include this mod (or components of it) in your own modpacks, projects, or derivative works under the following conditions:
 
