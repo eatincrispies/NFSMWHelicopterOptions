@@ -46,7 +46,7 @@ You are welcome to include this mod (or components of it) in your own modpacks, 
 * **Link Back:** Include a link back to this repository so users can find the original project and updates.
 * **Free to Use:** Non-commercial use only. Do not paywall or sell any project containing these files.
 
-If you have questions or want to showcase what you're working on, feel free to reach out or open an issue!
+If you have questions or want to showcase what you're working on, feel free to reach out or open an issue. Thank you.
 
 ## Credits
 
