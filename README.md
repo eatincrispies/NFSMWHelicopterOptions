@@ -38,6 +38,16 @@ Each section below is named after the game class it changes, which is also the n
 
 - How far away from you it spawns.
 
+Permission:
+
+You are welcome to include this mod (or components of it) in your own modpacks, projects, or derivative works under the following conditions:
+
+* **Credit Required:** You must clearly credit me as the original creator in your README, project documentation, or download page.
+* **Link Back:** Include a link back to this repository so users can find the original project and updates.
+* **Free to Use:** Non-commercial use only. Do not paywall or sell any project containing these files.
+
+If you have questions or want to showcase what you're working on, feel free to reach out or open an issue!
+
 ## Credits
 
 - `Eatincrispies` (Mod creator)
