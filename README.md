@@ -2,10 +2,7 @@
 
 <div align="center">
 
-# ImpTrafficAI (WIP)
-
-*An ASI Plugin for Need for Speed: Carbon to improve traffic AI behavior.*
-
+# NFSMWHelicopterOptions
 [![Status](https://img.shields.io/badge/Status-Paused-critical?style=flat-square)]()
 [![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
