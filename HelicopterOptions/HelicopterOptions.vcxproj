@@ -43,7 +43,12 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <TargetName>NFSMWHelicopterOptions</TargetName>
+    <TargetExt>.asi</TargetExt>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <TargetName>NFSMWHelicopterOptions</TargetName>
     <TargetExt>.asi</TargetExt>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -81,14 +86,6 @@
   <ItemGroup>
     <ClInclude Include="src\Config\Config.h" />
     <ClInclude Include="src\Config\Ini.h" />
-    <ClInclude Include="src\Core\Addresses.h" />
-    <ClInclude Include="src\Core\Detour.h" />
-    <ClInclude Include="src\Core\ExeIdentity.h" />
-    <ClInclude Include="src\Core\FrameTime.h" />
-    <ClInclude Include="src\Core\Log.h" />
-    <ClInclude Include="src\Core\Memory.h" />
-    <ClInclude Include="src\Core\PatchManager.h" />
-    <ClInclude Include="src\Core\Version.h" />
     <ClInclude Include="src\Game\AIActionHeliExit.h" />
     <ClInclude Include="src\Game\AIActionHeliPursuit.h" />
     <ClInclude Include="src\Game\AICopManager.h" />
@@ -101,12 +98,6 @@
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="src\Config\Ini.cpp" />
-    <ClCompile Include="src\Core\Detour.cpp" />
-    <ClCompile Include="src\Core\ExeIdentity.cpp" />
-    <ClCompile Include="src\Core\FrameTime.cpp" />
-    <ClCompile Include="src\Core\Log.cpp" />
-    <ClCompile Include="src\Core\Memory.cpp" />
-    <ClCompile Include="src\Core\PatchManager.cpp" />
     <ClCompile Include="src\Game\AIActionHeliExit.cpp" />
     <ClCompile Include="src\Game\AIActionHeliPursuit.cpp" />
     <ClCompile Include="src\Game\AICopManager.cpp" />

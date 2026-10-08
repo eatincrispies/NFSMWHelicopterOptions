@@ -1,20 +1,17 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "src/Config/Ini.h"
-#include "src/Core/Detour.h"
-#include "src/Core/ExeIdentity.h"
-#include "src/Core/FrameTime.h"
-#include "src/Core/Log.h"
-#include "src/Core/PatchManager.h"
-#include "src/Core/Version.h"
 #include "src/Game/AIActionHeliExit.h"
 #include "src/Game/AIActionHeliPursuit.h"
 #include "src/Game/AICopManager.h"
 #include "src/Game/AIPerpVehicle.h"
 #include "src/Game/AIVehicleHelicopter.h"
+#include "src/Game/Interfaces.h"
 #include "src/Game/SimpleChopper.h"
 
 namespace {
+
+    constexpr const char* kVersion = "V3.1.0";
 
     HMODULE gModule = nullptr;
 
@@ -22,15 +19,9 @@ namespace {
         Sleep(1000);
 
         Log::Open(gModule);
-        Log::Info("NFSMW HelicopterOptions " HO_VERSION_STR " starting.");
-
-        if (!ExeIdentity::IsSupported()) {
-            Log::Close();
-            return 0;
-        }
+        Log::Info("NFSMWHelicopterOptions %s starting.", kVersion);
 
         Ini::Load(gModule);
-        FrameTime::Init();
 
         AIActionHeliPursuit::InstallPatches();
         SimpleChopper::InstallPatches();
@@ -40,6 +31,7 @@ namespace {
         AIPerpVehicle::HookSetHeat();
         AIActionHeliPursuit::HookConstructor();
         AIVehicleHelicopter::HookOnDriving();
+        AIVehicleHelicopter::HookLineOfSight();
 
         const int problems = Patch::SkippedGroups() + Patch::FailedGroups();
         if (problems == 0)

@@ -2,7 +2,6 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Config" />
-    <Filter Include="Core" />
     <Filter Include="Game" />
   </ItemGroup>
   <ItemGroup>
@@ -11,33 +10,6 @@
     </ClInclude>
     <ClInclude Include="src\Config\Ini.h">
       <Filter>Config</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Addresses.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Bartender.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Detour.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\ExeIdentity.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\FrameTime.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Log.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Memory.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\PatchManager.h">
-      <Filter>Core</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Core\Version.h">
-      <Filter>Core</Filter>
     </ClInclude>
     <ClInclude Include="src\Game\AIActionHeliExit.h">
       <Filter>Game</Filter>
@@ -68,24 +40,6 @@
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="src\Config\Ini.cpp">
       <Filter>Config</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\Detour.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\ExeIdentity.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\FrameTime.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\Log.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\Memory.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Core\PatchManager.cpp">
-      <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="src\Game\AIActionHeliExit.cpp">
       <Filter>Game</Filter>
