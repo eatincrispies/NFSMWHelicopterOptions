@@ -34,7 +34,7 @@ Every section in `General.ini` is named `[Helicopter:Setting]`. The `In the game
 
 1. Copy `NFSMWHelicopterOptions.asi` and the `HelicopterOptions` folder into the `scripts` folder in your game directory, and launch the game.
 
-The settings are in `scripts\HelicopterOptions\Configuration\General.ini`. The `Presets` folder has a ready-made aggressive one.
+The settings are in `scripts\HelicopterOptions\Configuration\General.ini`.
 
 ## Credits
 
