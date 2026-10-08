@@ -1,12 +1,12 @@
 #include "AIActionHeliExit.h"
+#include "Interfaces.h"
 #include "../Config/Config.h"
-#include "../Core/Addresses.h"
-#include "../Core/Memory.h"
-#include "../Core/PatchManager.h"
 
 namespace AIActionHeliExit {
 
     namespace {
+
+        constexpr Patch::FloatPush kFlySpeed = { 0x00427BFEu, 100.0f };
 
         bool  gPatched = false;
         float gFlySpeed = 0.0f;
@@ -15,14 +15,18 @@ namespace AIActionHeliExit {
 
     void InstallPatches() {
         Patch::Begin("AIActionHeliExit::Update");
-        Patch::PushFloat("FlySpeed", Addr::AIActionHeliExit::FlySpeed, gCfg.FlySpeed);
+        Patch::PushFloat("FlySpeed", kFlySpeed, gCfg.FlySpeed);
         gPatched = Patch::Commit();
         gFlySpeed = gCfg.FlySpeed;
     }
 
     void Refresh() {
         if (!gPatched || gCfg.FlySpeed == gFlySpeed) return;
-        Memory::WriteCode(Addr::AIActionHeliExit::FlySpeed.va + 1, &gCfg.FlySpeed, sizeof(float));
+        if (!Patch::RewritePushedFloat(kFlySpeed, gFlySpeed, gCfg.FlySpeed)) {
+            gPatched = false;
+            Log::Warn("Another mod changed AIActionHeliExit::Update, so [Helicopter:FlySpeed] stops updating.");
+            return;
+        }
         gFlySpeed = gCfg.FlySpeed;
     }
 

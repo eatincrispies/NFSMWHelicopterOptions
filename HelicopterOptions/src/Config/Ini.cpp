@@ -9,7 +9,7 @@
 #include <cstring>
 #include "Ini.h"
 #include "Config.h"
-#include "../Core/Log.h"
+#include "../Game/Interfaces.h"
 
 Config gCfg;
 
@@ -18,39 +18,35 @@ namespace Ini {
     namespace {
 
         constexpr int kLevels = 10;
+        constexpr int kMostParts = 4;
+
+        const Config kGameValues{};
 
         struct Setting {
             const char*     section;
+            const char*     name;
             float Config::* number;
             bool  Config::* toggle;
             float           min;
             float           max;
+            bool            hasDefault;
         };
 
         const Setting kSettings[] = {
-            { "AIActionHeliPursuit:LeadSpeedScale",       &Config::LeadSpeedScale,          nullptr,            0.0f,    2.0f },
-            { "AIActionHeliPursuit:LeadBase",             &Config::LeadBase,                nullptr,            0.0f,  100.0f },
-            { "AIActionHeliPursuit:LeadMax",              &Config::LeadMax,                 nullptr,            5.0f,  150.0f },
-            { "AIActionHeliPursuit:ChaseHeightSkid",      &Config::ChaseHeightSkid,         nullptr,           -5.0f,   30.0f },
-            { "AIActionHeliPursuit:ChaseHeightClose",     &Config::ChaseHeightClose,        nullptr,           -5.0f,   30.0f },
-            { "AIActionHeliPursuit:ChaseHeightHigh",      &Config::ChaseHeightHigh,         nullptr,           -5.0f,   50.0f },
-            { "AIActionHeliPursuit:SkidCooldown",         &Config::SkidCooldown,            nullptr,          -10.0f,    1.0f },
-            { "AIActionHeliPursuit:SkidEntryMinDistance", &Config::SkidEntryMinDistance,    nullptr,            0.0f,   25.0f },
-            { "AIActionHeliPursuit:SkidEntryMaxDistance", &Config::SkidEntryMaxDistance,    nullptr,            5.0f,  150.0f },
-            { "AIActionHeliPursuit:SkidEntryAlignment",   &Config::SkidEntryAlignment,      nullptr,           -1.0f,    0.99f },
-            { "AIActionHeliPursuit:SkidEntryMaxHeight",   &Config::SkidEntryMaxHeight,      nullptr,            2.0f,   60.0f },
-            { "AIActionHeliPursuit:ReattackDelay",        &Config::ReattackDelay,           nullptr,            0.0f,  120.0f },
-            { "SimpleChopper:TurnResponseScale",          &Config::TurnResponseScale,       nullptr,          -30.0f,   -0.5f },
-            { "SimpleChopper:TurnClamp",                  &Config::TurnClamp,               nullptr,            0.4f,    5.0f },
-            { "SimpleChopper:MaxChopperAccel",            &Config::MaxChopperAccel,         nullptr,           40.0f,  250.0f },
-            { "SimpleChopper:MinChopperAccel",            &Config::MinChopperAccel,         nullptr,            0.0f,  160.0f },
-            { "AIVehicleHelicopter:SpeedCap",             &Config::SpeedCap,                nullptr,           30.0f,  500.0f },
-            { "AIVehicleHelicopter:MaxVerticalSpeed",     &Config::MaxVerticalSpeed,        nullptr,            0.0f,  200.0f },
-            { "AIVehicleHelicopter:FuelTime",             &Config::FuelTime,                nullptr,            0.0f, 3600.0f },
-            { "AIVehicleHelicopter:HeliSheet",            nullptr,                          &Config::HeliSheet, 0.0f,    1.0f },
-            { "AIVehicleHelicopter:IgnoreHeliSheetDistance", &Config::IgnoreHeliSheetDistance, nullptr,         0.0f, 2000.0f },
-            { "AIActionHeliExit:FlySpeed",                &Config::FlySpeed,                nullptr,           40.0f,  220.0f },
-            { "AICopManager:SpawnDistance",               &Config::SpawnDistance,           nullptr,           30.0f,  600.0f },
+            { "Helicopter:LeadBase",                "LeadBase",                &Config::LeadBase,                nullptr,            0.0f,   100.0f,  true },
+            { "Helicopter:LeadMax",                 "LeadMax",                 &Config::LeadMax,                 nullptr,            5.0f,   150.0f,  true },
+            { "Helicopter:LeadSmoothing",           "LeadSmoothing",           &Config::LeadSmoothing,           nullptr,            0.0f,   5.0f,    false },
+            { "Helicopter:Turning",                 "TurnClamp",               &Config::TurnClamp,               nullptr,            0.4f,   5.0f,    true },
+            { "Helicopter:Turning",                 "TurnResponseScale",       &Config::TurnResponseScale,       nullptr,            -30.0f, -0.5f,   true },
+            { "Helicopter:MaxChopperAccel",         "MaxChopperAccel",         &Config::MaxChopperAccel,         nullptr,            40.0f,  250.0f,  true },
+            { "Helicopter:MinChopperAccel",         "MinChopperAccel",         &Config::MinChopperAccel,         nullptr,            0.0f,   160.0f,  true },
+            { "Helicopter:SpeedCap",                "SpeedCap",                &Config::SpeedCap,                nullptr,            30.0f,  500.0f,  true },
+            { "Helicopter:LineOfSight",             "LineOfSight",             &Config::LineOfSight,             nullptr,            0.0f,   5000.0f, false },
+            { "Helicopter:FuelTime",                "FuelTime",                &Config::FuelTime,                nullptr,            0.0f,   3600.0f, false },
+            { "Helicopter:HeliSheet",               "HeliSheet",               nullptr,                          &Config::HeliSheet, 0.0f,   1.0f,    false },
+            { "Helicopter:IgnoreHeliSheetDistance", "IgnoreHeliSheetDistance", &Config::IgnoreHeliSheetDistance, nullptr,            0.0f,   2000.0f, false },
+            { "Helicopter:FlySpeed",                "FlySpeed",                &Config::FlySpeed,                nullptr,            40.0f,  220.0f,  true },
+            { "Helicopter:SpawnDistance",           "SpawnDistance",           &Config::SpawnDistance,           nullptr,            30.0f,  600.0f,  true },
         };
 
         constexpr int kCount = static_cast<int>(sizeof(kSettings) / sizeof(kSettings[0]));
@@ -93,10 +89,16 @@ namespace Ini {
                 text[--length] = '\0';
         }
 
-        int FindSetting(const char* section) {
+        int FindSection(const char* section) {
             for (int i = 0; i < kCount; ++i)
                 if (_stricmp(kSettings[i].section, section) == 0) return i;
             return -1;
+        }
+
+        int PartCount(int first) {
+            int count = 1;
+            while (first + count < kCount && std::strcmp(kSettings[first + count].section, kSettings[first].section) == 0) ++count;
+            return count;
         }
 
         int ParseLevel(const char* key, bool* race) {
@@ -124,6 +126,61 @@ namespace Ini {
             return true;
         }
 
+        int SplitParts(char* text, char* parts[kMostParts]) {
+            int count = 0;
+            char* next = text;
+            while (next && count < kMostParts) {
+                char* comma = std::strchr(next, ',');
+                if (comma) *comma = '\0';
+                Trim(next);
+                parts[count++] = next;
+                next = comma ? comma + 1 : nullptr;
+            }
+            return next ? kMostParts + 1 : count;
+        }
+
+        bool ParseValue(const Setting& setting, const char* section, const char* key, const char* text, int lineNumber,
+                        float* value, int* problems) {
+            if (setting.toggle) {
+                if (_stricmp(text, "true") != 0 && _stricmp(text, "false") != 0) {
+                    Log::Warn("General.ini line %d: [%s] %s = %s must be true or false.", lineNumber, section, key, text);
+                    ++*problems;
+                    return false;
+                }
+                *value = _stricmp(text, "true") == 0 ? 1.0f : 0.0f;
+                return true;
+            }
+            if (!ParseFloat(text, value)) {
+                Log::Warn("General.ini line %d: [%s] %s = %s is not a number.", lineNumber, section, key, text);
+                ++*problems;
+                return false;
+            }
+            if (*value < setting.min || *value > setting.max) {
+                const float clamped = *value < setting.min ? setting.min : setting.max;
+                Log::Warn("General.ini line %d: [%s] %s %s = %g is outside %g to %g; using %g.",
+                          lineNumber, section, key, setting.name, *value, setting.min, setting.max, clamped);
+                *value = clamped;
+                ++*problems;
+            }
+            return true;
+        }
+
+        bool Store(int index, int level, bool race, float value) {
+            Values& values = gValues[index];
+            if (level == 0) {
+                if (values.hasBase) return false;
+                values.base = value;
+                values.hasBase = true;
+                return true;
+            }
+            const uint16_t bit = static_cast<uint16_t>(1u << (level - 1));
+            uint16_t& mask = race ? values.hasRace : values.hasHeat;
+            if (mask & bit) return false;
+            (race ? values.race : values.heat)[level - 1] = value;
+            mask = static_cast<uint16_t>(mask | bit);
+            return true;
+        }
+
         float Resolve(const Values& values, int level, bool racing) {
             if (level >= 1 && level <= kLevels) {
                 const uint16_t bit = static_cast<uint16_t>(1u << (level - 1));
@@ -139,7 +196,7 @@ namespace Ini {
 
             char line[1024];
             char section[128] = "";
-            int  index = -1;
+            int  first = -1;
             int  lineNumber = 0;
             int  read = 0;
             int  problems = 0;
@@ -164,20 +221,20 @@ namespace Ini {
                     if (!close) {
                         Log::Warn("General.ini line %d: \"%s\" is not a section header.", lineNumber, text);
                         ++problems;
-                        index = -1;
+                        first = -1;
                         continue;
                     }
                     *close = '\0';
                     std::snprintf(section, sizeof(section), "%s", text + 1);
                     Trim(section);
-                    index = FindSetting(section);
-                    if (index < 0) {
+                    first = FindSection(section);
+                    if (first < 0) {
                         Log::Warn("General.ini line %d: unknown section [%s] ignored.", lineNumber, section);
                         ++unknownSections;
                     }
                     continue;
                 }
-                if (index < 0) continue;
+                if (first < 0) continue;
 
                 char* equals = std::strchr(text, '=');
                 if (!equals) {
@@ -199,49 +256,31 @@ namespace Ini {
                     ++problems;
                     continue;
                 }
-
-                const Setting& setting = kSettings[index];
-                float value = 0.0f;
-                if (setting.toggle) {
-                    if (std::strcmp(valueText, "0") != 0 && std::strcmp(valueText, "1") != 0) {
-                        Log::Warn("General.ini line %d: [%s] %s = %s must be 0 or 1.", lineNumber, section, key, valueText);
-                        ++problems;
-                        continue;
-                    }
-                    value = valueText[0] == '1' ? 1.0f : 0.0f;
-                } else {
-                    if (!ParseFloat(valueText, &value)) {
-                        Log::Warn("General.ini line %d: [%s] %s = %s is not a number.", lineNumber, section, key, valueText);
-                        ++problems;
-                        continue;
-                    }
-                    if (value < setting.min || value > setting.max) {
-                        const float clamped = value < setting.min ? setting.min : setting.max;
-                        Log::Warn("General.ini line %d: [%s] %s = %g is outside %g to %g; using %g.",
-                                  lineNumber, section, key, value, setting.min, setting.max, clamped);
-                        value = clamped;
-                        ++problems;
-                    }
+                if (level == 0 && !kSettings[first].hasDefault) {
+                    Log::Warn("General.ini line %d: [%s] can't have a default value; set heat01-heat10 instead.",
+                              lineNumber, section);
+                    ++problems;
+                    continue;
                 }
 
-                Values& values = gValues[index];
-                bool duplicate = false;
-                if (level == 0) {
-                    duplicate = values.hasBase;
-                    if (!duplicate) {
-                        values.base = value;
-                        values.hasBase = true;
-                    }
-                } else {
-                    const uint16_t bit = static_cast<uint16_t>(1u << (level - 1));
-                    uint16_t& mask = race ? values.hasRace : values.hasHeat;
-                    duplicate = (mask & bit) != 0;
-                    if (!duplicate) {
-                        (race ? values.race : values.heat)[level - 1] = value;
-                        mask = static_cast<uint16_t>(mask | bit);
-                    }
+                const int parts = PartCount(first);
+                char* partText[kMostParts] = {};
+                if (SplitParts(valueText, partText) != parts) {
+                    Log::Warn("General.ini line %d: [%s] %s needs %d value(s) separated by commas.", lineNumber, section, key, parts);
+                    ++problems;
+                    continue;
                 }
-                if (duplicate) {
+
+                float values[kMostParts] = {};
+                bool valid = true;
+                for (int part = 0; part < parts && valid; ++part)
+                    valid = ParseValue(kSettings[first + part], section, key, partText[part], lineNumber, &values[part], &problems);
+                if (!valid) continue;
+
+                bool stored = true;
+                for (int part = 0; part < parts; ++part)
+                    stored = Store(first + part, level, race, values[part]) && stored;
+                if (!stored) {
                     Log::Warn("General.ini line %d: [%s] %s is set twice; the first value is kept.", lineNumber, section, key);
                     ++problems;
                     continue;
@@ -252,28 +291,25 @@ namespace Ini {
 
             Log::Info("General.ini: %d value(s) read%s.", read, problems ? ", with the problems listed above" : "");
             if (unknownSections)
-                Log::Warn("General.ini: %d section(s) were not recognised. Sections are named after the game's classes, "
-                          "such as [SimpleChopper:TurnClamp]; a General.ini from an older version has to be replaced.",
+                Log::Warn("General.ini: %d section(s) were not recognised. Sections are named [Helicopter:...], "
+                          "such as [Helicopter:Turning]; a General.ini from an older version has to be replaced.",
                           unknownSections);
             return true;
         }
 
         void Sanitize() {
             if (gCfg.MinChopperAccel > gCfg.MaxChopperAccel) {
-                Log::Warn("[SimpleChopper:MinChopperAccel] %g is above [SimpleChopper:MaxChopperAccel] %g; lowered to match.",
+                Log::Warn("[Helicopter:MinChopperAccel] %g is above [Helicopter:MaxChopperAccel] %g; lowered to match.",
                           gCfg.MinChopperAccel, gCfg.MaxChopperAccel);
                 gCfg.MinChopperAccel = gCfg.MaxChopperAccel;
             }
-            if (gCfg.SkidEntryMinDistance >= gCfg.SkidEntryMaxDistance)
-                Log::Info("[AIActionHeliPursuit:SkidEntryMinDistance] is not below SkidEntryMaxDistance, "
-                          "so the helicopter cannot start an attack with these values.");
 
-            const float authority = std::fabs(gCfg.TurnResponseScale / Addr::SimpleChopper::Vanilla::TurnResponseScale)
-                                  * (gCfg.TurnClamp / Addr::SimpleChopper::Vanilla::TurnClamp);
+            const float authority = std::fabs(gCfg.TurnResponseScale / kGameValues.TurnResponseScale)
+                                  * (gCfg.TurnClamp / kGameValues.TurnClamp);
             if (authority >= 1.75f)
-                Log::Warn("Turning authority is %.0f%% of the game's (TurnResponseScale %g x TurnClamp %g). "
+                Log::Warn("Turning authority is %.0f%% of the game's ([Helicopter:Turning] TurnClamp %g x TurnResponseScale %g). "
                           "Past about 175%% the helicopter rolls far over and can flip.",
-                          authority * 100.0f, gCfg.TurnResponseScale, gCfg.TurnClamp);
+                          authority * 100.0f, gCfg.TurnClamp, gCfg.TurnResponseScale);
         }
 
     }
@@ -291,10 +327,6 @@ namespace Ini {
         if (char* slash = std::strrchr(directory, '\\')) slash[1] = '\0';
 
         char path[MAX_PATH];
-        std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\Debug.ini", directory);
-        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
-            Log::Info("Debug.ini is no longer used and can be deleted.");
-
         std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\General.ini", directory);
         if (!ReadFile(path))
             Log::Warn("%s was not found; every setting uses the game's own value.", path);
@@ -325,7 +357,8 @@ namespace Ini {
 
         Log::Info("Heat %d (%s): %d setting(s) changed.", level, racing ? "race" : "free roam", count);
         for (int n = 0; n < count; ++n)
-            Log::Info("  [%s] %g -> %g", kSettings[changed[n]].section, previous[n], Get(changed[n]));
+            Log::Info("  [%s] %s %g -> %g", kSettings[changed[n]].section, kSettings[changed[n]].name, previous[n],
+                      Get(changed[n]));
 
         if (count) Sanitize();
         return count > 0;

@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -10,17 +11,22 @@
 #include "Interfaces.h"
 #include "SimpleChopper.h"
 #include "../Config/Config.h"
-#include "../Core/Addresses.h"
-#include "../Core/Detour.h"
-#include "../Core/FrameTime.h"
-#include "../Core/Log.h"
-#include "../Core/Memory.h"
 
 namespace AIVehicleHelicopter {
 
     namespace {
 
-        namespace Game = Addr::AIVehicleHelicopter;
+        constexpr uintptr_t kHeliVehicle          = 0x0090D61Cu;
+        constexpr uintptr_t kOnDriving            = 0x00417A20u;
+        constexpr uint8_t   kOnDrivingPrologue[5] = { 0x83, 0xEC, 0x68, 0x53, 0x55 };
+        constexpr uintptr_t kLineOfSightStore     = 0x00417146u;
+        constexpr uint8_t   kLineOfSightStorePrologue[8] = { 0x89, 0x54, 0x24, 0x24, 0xD9, 0x44, 0x24, 0x24 };
+        constexpr unsigned  kOwner                = 0x34u;
+        constexpr unsigned  kDriveSpeed           = 0x84u;
+        constexpr unsigned  kFuelTimeRemaining    = 0x7D8u;
+        constexpr unsigned  kISimpleChopper       = 0x8B0u;
+
+        constexpr float kReferenceStep = 1.0f / 60.0f;
 
         uint32_t Detour::Registers::* const kRegisters[] = {
             &Detour::Registers::ecx, &Detour::Registers::esi, &Detour::Registers::edi, &Detour::Registers::ebx,
@@ -32,12 +38,63 @@ namespace AIVehicleHelicopter {
         int           gRegister = -1;
         unsigned long gFailStreak = 0;
         unsigned long gLastProbeWarningMs = 0;
+        unsigned long gLastProblemMs = 0;
+        unsigned long gLastRotateMs = 0;
         void*         gOwner = nullptr;
         float         gLastFuel = 0.0f;
-        unsigned      gVerticalLimits = 0;
-        unsigned long gLastRotateMs = 0;
-        int           gLastProblem = 0;
-        unsigned long gLastProblemMs = 0;
+
+        LARGE_INTEGER gFrequency = {};
+        LARGE_INTEGER gLastTick = {};
+        bool          gCounter = false;
+        bool          gHaveLastTick = false;
+        float         gSmoothed = 0.0f;
+        unsigned      gFrames = 0;
+        float         gElapsed = 0.0f;
+        bool          gReported = false;
+
+        void ResetClock() {
+            gHaveLastTick = false;
+            gSmoothed = 0.0f;
+        }
+
+        void InitClock() {
+            gCounter = QueryPerformanceFrequency(&gFrequency) != 0 && gFrequency.QuadPart > 0;
+            if (!gCounter)
+                Log::Warn("No high-resolution timer is available; the helicopter's motion is smoothed as if at 60 FPS.");
+            ResetClock();
+        }
+
+        void AdvanceClock() {
+            float dt = kReferenceStep;
+            LARGE_INTEGER now;
+            if (gCounter && QueryPerformanceCounter(&now)) {
+                if (gHaveLastTick) {
+                    const double seconds = static_cast<double>(now.QuadPart - gLastTick.QuadPart)
+                                         / static_cast<double>(gFrequency.QuadPart);
+                    if (seconds > 0.0 && seconds < 100.0) dt = static_cast<float>(seconds);
+                }
+                gLastTick = now;
+                gHaveLastTick = true;
+            }
+
+            const float outlier = kReferenceStep * 3.0f;
+            if (gSmoothed <= 0.0f)
+                gSmoothed = dt <= outlier ? dt : kReferenceStep;
+            else if (dt <= outlier)
+                gSmoothed += (dt - gSmoothed) * std::clamp(dt / 0.25f, 0.0f, 1.0f);
+            gSmoothed = std::clamp(gSmoothed, kReferenceStep * 0.125f, kReferenceStep);
+
+            ++gFrames;
+            gElapsed += dt;
+            if (!gReported && gElapsed >= 2.0f) {
+                gReported = true;
+                Log::Info("Helicopter updates arrive %.0f times per second.", gFrames / gElapsed);
+            }
+        }
+
+        float SmoothedFrames() {
+            return StepSeconds() / kReferenceStep;
+        }
 
         uintptr_t Field(void* heli, unsigned offset) {
             return reinterpret_cast<uintptr_t>(heli) + offset;
@@ -45,28 +102,18 @@ namespace AIVehicleHelicopter {
 
         bool HeliVehicleActive() {
             void* heli = nullptr;
-            return Memory::Read(Addr::gHeliVehicle, &heli, sizeof(heli)) && heli;
+            return Memory::Read(kHeliVehicle, &heli, sizeof(heli)) && heli;
         }
 
-        void ReportProblem(int problem, const char* what) {
-            const unsigned long now = GetTickCount();
-            if (problem == gLastProblem && now - gLastProblemMs < 30000) return;
-            gLastProblem = problem;
-            gLastProblemMs = now;
-            Log::Warn("The helicopter's %s could not be read this frame.", what);
-        }
-
-        bool Validate(void* heli, void** ownerOut, void** rigidBodyOut) {
+        bool Validate(void* heli, void** ownerOut, void** rigidBodyOut, float position[3]) {
             void* owner = nullptr;
             void* rigidBody = nullptr;
-            float position[3];
-            float velocity[3];
             float driveSpeed = 0.0f;
             if (!heli || !HeliVehicleActive()
-                || !Memory::Read(Field(heli, Game::Owner), &owner, sizeof(owner)) || !owner
-                || !Interfaces::CallGetter(owner, Addr::ISimable::GetRigidBody, &rigidBody)
-                || !Interfaces::ReadRigidBody(rigidBody, position, velocity, nullptr)
-                || !Memory::Read(Field(heli, Game::DriveSpeed), &driveSpeed, sizeof(driveSpeed))
+                || !Memory::Read(Field(heli, kOwner), &owner, sizeof(owner)) || !owner
+                || !Interfaces::ReadRigidBody(owner, &rigidBody)
+                || !Interfaces::ReadPosition(rigidBody, position)
+                || !Memory::Read(Field(heli, kDriveSpeed), &driveSpeed, sizeof(driveSpeed))
                 || !Memory::IsFinite(driveSpeed) || driveSpeed < -1.0e4f || driveSpeed > 1.0e4f)
                 return false;
 
@@ -82,9 +129,10 @@ namespace AIVehicleHelicopter {
         void* FindHelicopter(const Detour::Registers& registers) {
             if (!HeliVehicleActive()) return nullptr;
 
+            float position[3];
             if (gRegister >= 0) {
                 void* heli = RegisterValue(registers, gRegister);
-                if (Validate(heli, nullptr, nullptr)) {
+                if (Validate(heli, nullptr, nullptr, position)) {
                     gFailStreak = 0;
                     return heli;
                 }
@@ -99,7 +147,7 @@ namespace AIVehicleHelicopter {
 
             for (int i = 0; i < kRegisterCount; ++i) {
                 void* heli = RegisterValue(registers, i);
-                if (Validate(heli, nullptr, nullptr)) {
+                if (Validate(heli, nullptr, nullptr, position)) {
                     gRegister = i;
                     Log::Info("AIVehicleHelicopter::OnDriving receives the helicopter in %s.", kRegisterNames[i]);
                     return heli;
@@ -116,14 +164,12 @@ namespace AIVehicleHelicopter {
 
         void BeginHelicopter(const Snapshot& s) {
             gOwner = s.owner;
-            AIActionHeliPursuit::BeginHelicopter();
             HeliSheet::BeginHelicopter();
-            SimpleChopper::BeginHelicopter();
-            FrameTime::Reset();
+            AIActionHeliPursuit::ResetLead();
+            ResetClock();
 
             float playerPosition[3];
-            float playerVelocity[3];
-            if (Interfaces::ReadPlayer(playerPosition, playerVelocity)) {
+            if (Interfaces::ReadPlayerPosition(playerPosition)) {
                 const float dx = s.position[0] - playerPosition[0];
                 const float dz = s.position[2] - playerPosition[2];
                 Log::Info("Helicopter spawned %.0f m from you and %.0f m above you, with %.0f s of fuel.",
@@ -135,18 +181,15 @@ namespace AIVehicleHelicopter {
             gLastFuel = s.fuel;
             if (gCfg.FuelTime > 0.0f && WriteFuelTime(s, gCfg.FuelTime)) {
                 gLastFuel = gCfg.FuelTime;
-                Log::Info("Fuel set to %.0f s by [AIVehicleHelicopter:FuelTime].", gCfg.FuelTime);
+                Log::Info("Fuel set to %.0f s by [Helicopter:FuelTime].", gCfg.FuelTime);
             }
+            if (gCfg.LineOfSight > 0.0f)
+                Log::Info("Line of sight set to %.0f m by [Helicopter:LineOfSight].", gCfg.LineOfSight);
         }
 
-        void LimitVerticalSpeed(const Snapshot& s) {
-            const float limit = gCfg.MaxVerticalSpeed;
-            const float vertical = s.velocity[1];
-            if (limit <= 0.0f || (vertical <= limit && vertical >= -limit)) return;
-
-            const float capped = vertical > limit ? limit : -limit;
-            if (WriteVerticalVelocity(s, capped) && gVerticalLimits++ % 30 == 0)
-                Log::Info("Vertical speed %.1f m/s limited to %.1f m/s (%u time(s) so far).", vertical, capped, gVerticalLimits);
+        void __cdecl LineOfSightEntry(Detour::Registers* registers) {
+            if (gCfg.LineOfSight <= 0.0f) return;
+            std::memcpy(&registers->edx, &gCfg.LineOfSight, sizeof(registers->edx));
         }
 
         void OnDriving(void* heli) {
@@ -171,19 +214,13 @@ namespace AIVehicleHelicopter {
             SimpleChopper::ApplySpeedCap(s);
             if (newHelicopter) return;
 
-            SimpleChopper::ScaleMotionFilters(FrameTime::SmoothedDelta());
-
-            const float dt = FrameTime::Step();
-            if (dt <= 0.0f) return;
-
-            AIActionHeliPursuit::TrackAttacks(s.mode, dt);
-            LimitVerticalSpeed(s);
+            SimpleChopper::ScaleMotionFilters(SmoothedFrames());
         }
 
         void __cdecl OnDrivingEntry(Detour::Registers* registers) {
             void* heli = FindHelicopter(*registers);
             if (!heli) return;
-            FrameTime::BeginFrame();
+            AdvanceClock();
             OnDriving(heli);
         }
 
@@ -191,18 +228,16 @@ namespace AIVehicleHelicopter {
 
     bool Capture(void* heli, Snapshot* out) {
         std::memset(out, 0, sizeof(*out));
-        if (!Validate(heli, &out->owner, &out->rigidBody)) return false;
+        if (!Validate(heli, &out->owner, &out->rigidBody, out->position)) return false;
         out->heli = heli;
+        Memory::Read(Field(heli, kISimpleChopper), &out->chopper, sizeof(out->chopper));
 
-        if (!Interfaces::ReadRigidBody(out->rigidBody, out->position, out->velocity, &out->velocityPointer)) {
-            ReportProblem(1, "position and velocity");
-            return false;
-        }
-
-        if (!Memory::Read(Field(heli, Game::DriveSpeed), &out->driveSpeed, sizeof(float))
-            || !Memory::Read(Field(heli, Game::FuelTimeRemaining), &out->fuel, sizeof(float))
-            || !Memory::IsFinite(out->fuel)) {
-            ReportProblem(2, "drive speed and fuel");
+        if (!Memory::Read(Field(heli, kFuelTimeRemaining), &out->fuel, sizeof(out->fuel)) || !Memory::IsFinite(out->fuel)) {
+            const unsigned long now = GetTickCount();
+            if (now - gLastProblemMs >= 30000) {
+                gLastProblemMs = now;
+                Log::Warn("The helicopter's fuel could not be read this frame.");
+            }
             return false;
         }
 
@@ -210,24 +245,24 @@ namespace AIVehicleHelicopter {
         return true;
     }
 
-    bool WriteDriveSpeed(const Snapshot& snapshot, float speed) {
-        return snapshot.heli && Memory::IsFinite(speed)
-            && Memory::WriteData(Field(snapshot.heli, Game::DriveSpeed), &speed, sizeof(speed));
-    }
-
-    bool WriteVerticalVelocity(const Snapshot& snapshot, float y) {
-        return snapshot.velocityPointer && Memory::IsFinite(y)
-            && Memory::WriteData(reinterpret_cast<uintptr_t>(&snapshot.velocityPointer[1]), &y, sizeof(y));
-    }
-
     bool WriteFuelTime(const Snapshot& snapshot, float seconds) {
         return snapshot.heli && Memory::IsFinite(seconds) && seconds >= 0.0f
-            && Memory::WriteData(Field(snapshot.heli, Game::FuelTimeRemaining), &seconds, sizeof(seconds));
+            && Memory::WriteData(Field(snapshot.heli, kFuelTimeRemaining), &seconds, sizeof(seconds));
     }
 
     bool HookOnDriving() {
-        return Detour::Install("AIVehicleHelicopter::OnDriving", Game::OnDriving, Game::OnDrivingPrologue,
-                               sizeof(Game::OnDrivingPrologue), &OnDrivingEntry);
+        InitClock();
+        return Detour::Install("AIVehicleHelicopter::OnDriving", kOnDriving, kOnDrivingPrologue,
+                               sizeof(kOnDrivingPrologue), &OnDrivingEntry);
+    }
+
+    bool HookLineOfSight() {
+        return Detour::Install("AIVehicleHelicopter line-of-sight check", kLineOfSightStore, kLineOfSightStorePrologue,
+                               sizeof(kLineOfSightStorePrologue), &LineOfSightEntry);
+    }
+
+    float StepSeconds() {
+        return gSmoothed > 0.0f ? gSmoothed : kReferenceStep;
     }
 
 }

@@ -1,63 +1,53 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include "AIActionHeliPursuit.h"
+#include "AIVehicleHelicopter.h"
+#include "Interfaces.h"
 #include "../Config/Config.h"
-#include "../Core/Addresses.h"
-#include "../Core/Detour.h"
-#include "../Core/Log.h"
-#include "../Core/Memory.h"
-#include "../Core/PatchManager.h"
 
 namespace AIActionHeliPursuit {
 
     namespace {
 
-        namespace Game = Addr::AIActionHeliPursuit;
+        constexpr uintptr_t kConstructor            = 0x00420EC0u;
+        constexpr uint8_t   kConstructorPrologue[7] = { 0x6A, 0xFF, 0x68, 0xF8, 0x7D, 0x86, 0x00 };
+        constexpr uintptr_t kVtable                 = 0x00891358u;
+        constexpr unsigned  kRigidBody              = 0x54u;
+        constexpr unsigned  kMode                   = 0xA4u;
 
-        constexpr float kBlockedEntryMinDistance = 25.0f;
-        constexpr float kBlockedEntryMaxDistance = 5.0f;
-        constexpr int   kTrackedActions          = 4;
+        constexpr Patch::FloatOperand kLeadBase             = { 0x00412946u, { 0xD8, 0x05 }, 0x00890614u };
+        constexpr Patch::FloatOperand kLeadMax              = { 0x0041294Cu, { 0xD8, 0x15 }, 0x00890658u };
+        constexpr Patch::CallSite     kLeadHeadingNormalize = { 0x00412932u, 0x0040FE20u };
+
+        constexpr int           kTrackedActions  = 4;
+        constexpr unsigned long kLeadSnapAfterMs = 1000;
+        constexpr float         kSmallestLength  = 1.0e-3f;
+
+        using NormalizeCall = void (__cdecl*)(const float* in, float* out);
 
         struct LiveValues {
-            float skidCooldown;
-            float skidEntryMinDistance;
-            float skidEntryMaxDistance;
-            float skidEntryAlignment;
-            float skidEntryMaxHeight;
-            float leadSpeedScale;
             float leadBase;
             float leadMax;
-            float chaseHeightSkid;
-            float chaseHeightClose;
-            float chaseHeightHigh;
         };
 
-        LiveValues gLive = {};
-        bool       gAttacksBlocked = false;
-        void*      gActions[kTrackedActions] = {};
-        int        gNextAction = 0;
-        void*      gAction = nullptr;
-        bool       gAttacking = false;
-        int        gAttackRuns = 0;
-        float      gReattackTimer = 0.0f;
-
-        void WriteEntryGates() {
-            gLive.skidEntryMinDistance = gAttacksBlocked ? kBlockedEntryMinDistance : gCfg.SkidEntryMinDistance;
-            gLive.skidEntryMaxDistance = gAttacksBlocked ? kBlockedEntryMaxDistance : gCfg.SkidEntryMaxDistance;
-        }
-
-        void SetAttacksBlocked(bool blocked) {
-            if (blocked == gAttacksBlocked) return;
-            gAttacksBlocked = blocked;
-            WriteEntryGates();
-        }
+        LiveValues    gLive = {};
+        void*         gActions[kTrackedActions] = {};
+        int           gNextAction = 0;
+        void*         gAction = nullptr;
+        float         gLeadHeading[3] = {};
+        bool          gHaveLeadHeading = false;
+        unsigned long gLastLeadMs = 0;
 
         bool BelongsTo(void* action, void* rigidBody) {
             uint32_t table = 0;
             uint32_t body = 0;
             return action
                 && Memory::Read(reinterpret_cast<uintptr_t>(action), &table, sizeof(table))
-                && table == Game::Vtable
-                && Memory::Read(reinterpret_cast<uintptr_t>(action) + Game::RigidBody, &body, sizeof(body))
+                && table == kVtable
+                && Memory::Read(reinterpret_cast<uintptr_t>(action) + kRigidBody, &body, sizeof(body))
                 && body == static_cast<uint32_t>(reinterpret_cast<uintptr_t>(rigidBody));
         }
 
@@ -70,42 +60,71 @@ namespace AIActionHeliPursuit {
             gNextAction = (gNextAction + 1) % kTrackedActions;
         }
 
+        bool IsFinite3(const float* vector) {
+            return Memory::IsFinite(vector[0]) && Memory::IsFinite(vector[1]) && Memory::IsFinite(vector[2]);
+        }
+
+        void SmoothLeadHeading(float* heading) {
+            const float seconds = gCfg.LeadSmoothing;
+            if (seconds <= 0.0f || !IsFinite3(heading)) {
+                gHaveLeadHeading = false;
+                return;
+            }
+
+            const unsigned long now = GetTickCount();
+            const bool stale = now - gLastLeadMs > kLeadSnapAfterMs;
+            gLastLeadMs = now;
+            if (!gHaveLeadHeading || stale) {
+                std::memcpy(gLeadHeading, heading, sizeof(gLeadHeading));
+                gHaveLeadHeading = true;
+                return;
+            }
+
+            const float weight = 1.0f - std::exp(-AIVehicleHelicopter::StepSeconds() / seconds);
+            float length = 0.0f;
+            for (int i = 0; i < 3; ++i) {
+                gLeadHeading[i] += (heading[i] - gLeadHeading[i]) * weight;
+                length += gLeadHeading[i] * gLeadHeading[i];
+            }
+            length = std::sqrt(length);
+            if (length < kSmallestLength) {
+                std::memcpy(gLeadHeading, heading, sizeof(gLeadHeading));
+                return;
+            }
+            for (int i = 0; i < 3; ++i) {
+                gLeadHeading[i] /= length;
+                heading[i] = gLeadHeading[i];
+            }
+        }
+
+        void __cdecl LeadHeadingHook(const float* in, float* out) {
+            reinterpret_cast<NormalizeCall>(kLeadHeadingNormalize.target)(in, out);
+            SmoothLeadHeading(out);
+        }
+
     }
 
     void Refresh() {
-        gLive.skidCooldown       = gCfg.SkidCooldown;
-        gLive.skidEntryAlignment = gCfg.SkidEntryAlignment;
-        gLive.skidEntryMaxHeight = gCfg.SkidEntryMaxHeight;
-        gLive.leadSpeedScale     = gCfg.LeadSpeedScale;
-        gLive.leadBase           = gCfg.LeadBase;
-        gLive.leadMax            = gCfg.LeadMax;
-        gLive.chaseHeightSkid    = gCfg.ChaseHeightSkid;
-        gLive.chaseHeightClose   = gCfg.ChaseHeightClose;
-        gLive.chaseHeightHigh    = gCfg.ChaseHeightHigh;
-        WriteEntryGates();
+        gLive.leadBase = gCfg.LeadBase;
+        gLive.leadMax  = gCfg.LeadMax;
+    }
+
+    void ResetLead() {
+        gHaveLeadHeading = false;
     }
 
     void InstallPatches() {
         Refresh();
         Patch::Begin("AIActionHeliPursuit::StraightLinePursuit");
-        Patch::RedirectFloat("SkidCooldown", Game::SkidCooldownGate, &gLive.skidCooldown);
-        Patch::RedirectFloat("SkidCooldown height mode", Game::SkidCooldownHeightMode, &gLive.skidCooldown);
-        Patch::RedirectFloat("SkidEntryMaxDistance", Game::SkidEntryMaxDistance, &gLive.skidEntryMaxDistance);
-        Patch::RedirectFloat("SkidEntryMinDistance", Game::SkidEntryMinDistance, &gLive.skidEntryMinDistance);
-        Patch::RedirectFloat("SkidEntryAlignment", Game::SkidEntryAlignment, &gLive.skidEntryAlignment);
-        Patch::RedirectFloat("SkidEntryMaxHeight", Game::SkidEntryMaxHeight, &gLive.skidEntryMaxHeight);
-        Patch::RedirectFloat("LeadSpeedScale", Game::LeadSpeedScale, &gLive.leadSpeedScale);
-        Patch::RedirectFloat("LeadBase", Game::LeadBase, &gLive.leadBase);
-        Patch::RedirectFloat("LeadMax", Game::LeadMax, &gLive.leadMax);
-        Patch::RedirectFloat("ChaseHeightSkid", Game::ChaseHeightSkid, &gLive.chaseHeightSkid);
-        Patch::RedirectFloat("ChaseHeightClose", Game::ChaseHeightClose, &gLive.chaseHeightClose);
-        Patch::RedirectFloat("ChaseHeightHigh", Game::ChaseHeightHigh, &gLive.chaseHeightHigh);
+        Patch::RedirectFloat("LeadBase", kLeadBase, &gLive.leadBase);
+        Patch::RedirectFloat("LeadMax", kLeadMax, &gLive.leadMax);
+        Patch::RedirectCall("lead heading", kLeadHeadingNormalize, reinterpret_cast<const void*>(&LeadHeadingHook));
         Patch::Commit();
     }
 
     bool HookConstructor() {
-        return Detour::Install("AIActionHeliPursuit::AIActionHeliPursuit", Game::Constructor, Game::ConstructorPrologue,
-                               sizeof(Game::ConstructorPrologue), &ConstructorEntry);
+        return Detour::Install("AIActionHeliPursuit::AIActionHeliPursuit", kConstructor, kConstructorPrologue,
+                               sizeof(kConstructorPrologue), &ConstructorEntry);
     }
 
     int ReadMode(void* rigidBody) {
@@ -120,28 +139,9 @@ namespace AIActionHeliPursuit {
             if (!gAction) return -1;
         }
         uint32_t mode = 0;
-        if (!Memory::Read(reinterpret_cast<uintptr_t>(gAction) + Game::Mode, &mode, sizeof(mode)) || mode > 3u)
+        if (!Memory::Read(reinterpret_cast<uintptr_t>(gAction) + kMode, &mode, sizeof(mode)) || mode > 3u)
             return -1;
         return static_cast<int>(mode);
-    }
-
-    void BeginHelicopter() {
-        gAttacking = false;
-        gAttackRuns = 0;
-        gReattackTimer = 0.0f;
-        SetAttacksBlocked(false);
-    }
-
-    void TrackAttacks(int mode, float dt) {
-        const bool attacking = mode >= 2;
-        if (attacking && !gAttacking)
-            Log::Info("Helicopter attack run %d.", ++gAttackRuns);
-        if (!attacking && gAttacking)
-            gReattackTimer = gCfg.ReattackDelay;
-        gAttacking = attacking;
-
-        if (gReattackTimer > 0.0f) gReattackTimer -= dt;
-        SetAttacksBlocked(!attacking && gReattackTimer > 0.0f);
     }
 
 }

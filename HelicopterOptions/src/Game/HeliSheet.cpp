@@ -6,15 +6,15 @@
 #include "AIVehicleHelicopter.h"
 #include "Interfaces.h"
 #include "../Config/Config.h"
-#include "../Core/Addresses.h"
-#include "../Core/Log.h"
-#include "../Core/Memory.h"
 
 namespace HeliSheet {
 
     namespace {
 
-        constexpr float kReturnFraction = 0.8f;
+        constexpr uintptr_t kIgnoreHeliSheet      = 0x0090D621u;
+        constexpr uintptr_t kNeverIgnoreHeliSheet = 0x008EB1F4u;
+        constexpr int       kAttackMode           = 2;
+        constexpr float     kReturnFraction       = 0.8f;
 
         bool          gFarFromTarget = false;
         bool          gIgnoring = false;
@@ -22,9 +22,25 @@ namespace HeliSheet {
 
         bool GameIgnoresDuringAttack(int mode) {
             uint8_t never = 1;
-            Memory::Read(Addr::NeverIgnoreHeliSheet, &never, sizeof(never));
-            return mode >= 2 && never == 0;
+            Memory::Read(kNeverIgnoreHeliSheet, &never, sizeof(never));
+            return mode >= kAttackMode && never == 0;
         }
+
+#if defined(_DEBUG)
+        unsigned long gLastHeightLogMs = 0;
+
+        void LogHeight(const AIVehicleHelicopter::Snapshot& s) {
+            const unsigned long now = GetTickCount();
+            float playerPosition[3];
+            if (now - gLastHeightLogMs < 2000 || !Interfaces::ReadPlayerPosition(playerPosition)) return;
+            gLastHeightLogMs = now;
+
+            uint8_t ignored = 0;
+            Memory::Read(kIgnoreHeliSheet, &ignored, sizeof(ignored));
+            Log::Info("Helicopter is %.0f m above you (attack mode %d); the heli sheet is %s.",
+                      s.position[1] - playerPosition[1], s.mode, ignored ? "ignored" : "obeyed");
+        }
+#endif
 
     }
 
@@ -35,8 +51,7 @@ namespace HeliSheet {
     void Update(const AIVehicleHelicopter::Snapshot& s) {
         bool outOfRange = false;
         float playerPosition[3];
-        float playerVelocity[3];
-        if (gCfg.IgnoreHeliSheetDistance > 0.0f && Interfaces::ReadPlayer(playerPosition, playerVelocity)) {
+        if (gCfg.IgnoreHeliSheetDistance > 0.0f && Interfaces::ReadPlayerPosition(playerPosition)) {
             const float dx = s.position[0] - playerPosition[0];
             const float dz = s.position[2] - playerPosition[2];
             const float distance = std::sqrt(dx * dx + dz * dz);
@@ -56,11 +71,15 @@ namespace HeliSheet {
         gFarFromTarget = outOfRange;
 
         const bool ignore = !gCfg.HeliSheet || outOfRange;
-        if (!ignore && !gIgnoring) return;
+        if (ignore || gIgnoring) {
+            const uint8_t flag = (ignore || GameIgnoresDuringAttack(s.mode)) ? 1 : 0;
+            Memory::WriteData(kIgnoreHeliSheet, &flag, sizeof(flag));
+            gIgnoring = ignore;
+        }
 
-        const uint8_t flag = (ignore || GameIgnoresDuringAttack(s.mode)) ? 1 : 0;
-        Memory::WriteData(Addr::bIgnoreHeliSheet, &flag, sizeof(flag));
-        gIgnoring = ignore;
+#if defined(_DEBUG)
+        LogHeight(s);
+#endif
     }
 
 }

@@ -6,9 +6,8 @@ namespace SimpleChopper {
 
     void InstallPatches();
     void Refresh();
-    void ScaleMotionFilters(float delta);
+    void ScaleMotionFilters(float frames);
 
-    void BeginHelicopter();
     void ApplySpeedCap(const AIVehicleHelicopter::Snapshot& snapshot);
     void RestoreSpeedCap();
 
