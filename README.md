@@ -1,55 +1,42 @@
-![Thumbnail](Thumbnail_v2.webp?v=2)
+# NFSMWHelicopterOptions
 
-# NFSMW HelicopterOptions
+An ASI mod for **Need for Speed: Most Wanted (2005)**, PC v1.3, that controls how the police helicopter chases, flies, sees, spawns and refuels. Every setting in `General.ini` can have its own value at each Heat level from 1 to 10, with separate values for races.
 
-An ASI mod for **Need for Speed: Most Wanted (2005)**, PC v1.3, that controls how the police helicopter chases, attacks, flies, spawns and refuels. Every setting in `General.ini` can have its own value at each Heat level from 1 to 10, with separate values for races, etc.
+Every section in `General.ini` is named `[Helicopter:Setting]`. The `In the game` line of each section says which class and value in `speed.exe` it changes, which is also the name of the source file that changes it.
 
-Each section below is named after the game class it changes, which is also the name of the source file that changes it.
+## Chasing
 
-## Chasing - `AIActionHeliPursuit`
+- `LeadBase`, `LeadMax`: how far ahead of your car the helicopter aims.
+- `LeadSmoothing`: keeps the helicopter on its line through sharp turns. In the vanilla game the point it aims at jumps the moment your heading changes, so it slides sideways after it and pushes forward again once you straighten out.
 
-- How far ahead of your car the helicopter aims, based on your speed.
-- How high above you it flies while chasing, while lining up an attack, and when far away.
+## Flight model
 
-## Skid attacks - `AIActionHeliPursuit`
-
-- When it can start a ramming attack: the distance window, how lined up it must be, how far above you it may be, and the cooldown between attempts.
-- An optional extra pause after every attack.
-
-## Flight model - `SimpleChopper`
-
-- How sharply it turns, and the hardest turn it can make.
-- How much acceleration it has.
-- Its top speed. The game caps the helicopter at 100 m/s (360 km/h); the mod raises or lowers that cap and scales every speed the helicopter asks for with it, so it actually uses the new limit.
+- `Turning`: how sharply it turns, and the hardest turn it can make, as one pair of values.
+- `MaxChopperAccel`, `MinChopperAccel`: how much acceleration it has.
 - Its motion stays the same above 60 FPS as it is at 60 FPS.
 
-## Altitude - `HeliSheet`
+## Speed, sight and fuel
 
-- Turns the heli sheet, the game's map of the lowest altitude the helicopter may fly at, on or off.
-- Ignores the heli sheet only while the helicopter is far away from you, so it flies straight back instead of stalling high up and falling behind.
+- `SpeedCap`: its top speed. The game caps the helicopter at 100 m/s (360 km/h), climbing included; raising the cap lets it keep up with fast cars and stops climbs from slowing it down.
+- `LineOfSight`: how far away it can still see your car.
+- `FuelTime`: how long its fuel lasts after it spawns.
+- `HeliSheet`, `IgnoreHeliSheetDistance`: turns the heli sheet, the game's map of the lowest altitude the helicopter may fly at, on or off, or ignores it only while the helicopter is far away from you, so it flies straight back instead of stalling high up and falling behind.
 
-## Fuel, speed limits and leaving - `AIVehicleHelicopter`, `AIActionHeliExit`
+## Leaving
 
-- How long its fuel lasts after it spawns.
-- The fastest it may climb or descend, which stops the game from launching it upward and making it bounce.
-- How fast it flies away when it leaves.
+- `FlySpeed`: how fast it flies away when it leaves.
 
-## Spawning - `AICopManager`
+## Spawning
 
-- How far away from you it spawns.
+- `SpawnDistance`: how far away from you it spawns.
 
-## Permission:
+## Installation
 
-You are welcome to include this mod (or components of it) in your own modpacks, projects, or derivative works under the following conditions:
+1. Copy `NFSMWHelicopterOptions.asi` and the `HelicopterOptions` folder into the `scripts` folder in your game directory, and launch the game.
 
-* **Credit Required:** You must clearly credit me as the original creator in your README, project documentation, or download page.
-* **Link Back:** Include a link back to this repository so users can find the original project and updates.
-* **Free to Use:** Non-commercial use only. Do not paywall or sell any project containing these files.
-
-If you have questions or want to showcase what you're working on, feel free to reach out or open an issue. Thank you.
+The settings are in `scripts\HelicopterOptions\Configuration\General.ini`. The `Presets` folder has a ready-made aggressive one.
 
 ## Credits
 
 - `Eatincrispies` (Mod creator)
 - `Fierelier` - (MinGW support)
-- `Roskler` - (Testing the mod and reporting issues before release)
