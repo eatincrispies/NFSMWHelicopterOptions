@@ -20,7 +20,7 @@ Every section in `General.ini` is named `[Helicopter:Setting]`. The `In the game
 - `SpeedCap`: its top speed. The game caps the helicopter at 100 m/s (360 km/h), climbing included; raising the cap lets it keep up with fast cars and stops climbs from slowing it down.
 - `LineOfSight`: how far away it can still see your car.
 - `FuelTime`: how long its fuel lasts after it spawns.
-- `HeliSheet`, `IgnoreHeliSheetDistance`: turns the heli sheet, the game's map of the lowest altitude the helicopter may fly at, on or off, or ignores it only while the helicopter is far away from you, so it flies straight back instead of stalling high up and falling behind.
+- `HeliSheet`, `IgnoreHeliSheetDistance`: turns the heli sheet flag, the game's map of the lowest altitude the helicopter may fly at, on or off, or ignores it only while the helicopter is far away from you, so it flies straight back instead of stalling high up and falling behind.
 
 ## Leaving
 
@@ -30,13 +30,8 @@ Every section in `General.ini` is named `[Helicopter:Setting]`. The `In the game
 
 - `SpawnDistance`: how far away from you it spawns.
 
-## Installation
-
-1. Copy `NFSMWHelicopterOptions.asi` and the `HelicopterOptions` folder into the `scripts` folder in your game directory, and launch the game.
-
-The settings are in `scripts\HelicopterOptions\Configuration\General.ini`.
-
 ## Credits
 
 - `Eatincrispies` (Mod creator)
+- `Roskler` (Tester and Reporter)
 - `Fierelier` - (MinGW support)
