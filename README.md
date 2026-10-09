@@ -1,3 +1,5 @@
+![Thumbnail](Thumbnail_v2.webp)
+
 # NFSMWHelicopterOptions
 
 An ASI mod for **Need for Speed: Most Wanted (2005)**, PC v1.3, that controls how the police helicopter chases, flies, sees, spawns and refuels. Every setting in `General.ini` can have its own value at each Heat level from 1 to 10, with separate values for races.
