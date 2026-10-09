@@ -1,69 +1,71 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ItemGroup>
-    <Filter Include="Config" />
-    <Filter Include="Game" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="src\Config\Config.h">
-      <Filter>Config</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Config\Ini.h">
-      <Filter>Config</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\AIActionHeliExit.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\AIActionHeliPursuit.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\AICopManager.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\AIPerpVehicle.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\AIVehicleHelicopter.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\HeliSheet.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\Interfaces.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Game\SimpleChopper.h">
-      <Filter>Game</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="dllmain.cpp" />
-    <ClCompile Include="src\Config\Ini.cpp">
-      <Filter>Config</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\AIActionHeliExit.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\AIActionHeliPursuit.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\AICopManager.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\AIPerpVehicle.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\AIVehicleHelicopter.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\HeliSheet.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\Interfaces.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Game\SimpleChopper.cpp">
-      <Filter>Game</Filter>
-    </ClCompile>
-  </ItemGroup>
-</Project>
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Helicopter" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Helicopter\AIActionHeliExit.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\AIActionHeliPursuit.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\AICopManager.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\AIPerpVehicle.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\AIVehicleHelicopter.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\HeliSheet.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\Hooks.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\Interfaces.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\SimpleChopper.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Helicopter\SoundAI.hpp">
+      <Filter>Helicopter</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="src\Helicopter\AIActionHeliExit.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\AIActionHeliPursuit.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\AICopManager.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\AIPerpVehicle.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\AIVehicleHelicopter.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\HeliSheet.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\Hooks.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\Interfaces.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\SimpleChopper.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Helicopter\SoundAI.cpp">
+      <Filter>Helicopter</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>

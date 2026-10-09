@@ -1,17 +1,16 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include "src/Config/Ini.h"
-#include "src/Game/AIActionHeliExit.h"
-#include "src/Game/AIActionHeliPursuit.h"
-#include "src/Game/AICopManager.h"
-#include "src/Game/AIPerpVehicle.h"
-#include "src/Game/AIVehicleHelicopter.h"
-#include "src/Game/Interfaces.h"
-#include "src/Game/SimpleChopper.h"
+#include "src/Helicopter/AIActionHeliExit.hpp"
+#include "src/Helicopter/AIActionHeliPursuit.hpp"
+#include "src/Helicopter/AICopManager.hpp"
+#include "src/Helicopter/AIPerpVehicle.hpp"
+#include "src/Helicopter/AIVehicleHelicopter.hpp"
+#include "src/Helicopter/Hooks.hpp"
+#include "src/Helicopter/SimpleChopper.hpp"
 
 namespace {
 
-    constexpr const char* kVersion = "V3.1.0";
+    constexpr const char* kVersion = "V3.3.0";
 
     HMODULE gModule = nullptr;
 
@@ -31,7 +30,7 @@ namespace {
         AIPerpVehicle::HookSetHeat();
         AIActionHeliPursuit::HookConstructor();
         AIVehicleHelicopter::HookOnDriving();
-        AIVehicleHelicopter::HookLineOfSight();
+        AIVehicleHelicopter::HookCanSeeTarget();
 
         const int problems = Patch::SkippedGroups() + Patch::FailedGroups();
         if (problems == 0)
@@ -48,8 +47,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
     case DLL_PROCESS_ATTACH:
         gModule = module;
         DisableThreadLibraryCalls(module);
-        if (HANDLE thread = CreateThread(nullptr, 0, Initialize, nullptr, 0, nullptr))
-            CloseHandle(thread);
+        if (HANDLE thread = CreateThread(nullptr, 0, Initialize, nullptr, 0, nullptr)) CloseHandle(thread);
         break;
 
     case DLL_PROCESS_DETACH:

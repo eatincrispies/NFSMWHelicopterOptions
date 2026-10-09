@@ -84,28 +84,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\Config\Config.h" />
-    <ClInclude Include="src\Config\Ini.h" />
-    <ClInclude Include="src\Game\AIActionHeliExit.h" />
-    <ClInclude Include="src\Game\AIActionHeliPursuit.h" />
-    <ClInclude Include="src\Game\AICopManager.h" />
-    <ClInclude Include="src\Game\AIPerpVehicle.h" />
-    <ClInclude Include="src\Game\AIVehicleHelicopter.h" />
-    <ClInclude Include="src\Game\HeliSheet.h" />
-    <ClInclude Include="src\Game\Interfaces.h" />
-    <ClInclude Include="src\Game\SimpleChopper.h" />
+    <ClInclude Include="src\Helicopter\AIActionHeliExit.hpp" />
+    <ClInclude Include="src\Helicopter\AIActionHeliPursuit.hpp" />
+    <ClInclude Include="src\Helicopter\AICopManager.hpp" />
+    <ClInclude Include="src\Helicopter\AIPerpVehicle.hpp" />
+    <ClInclude Include="src\Helicopter\AIVehicleHelicopter.hpp" />
+    <ClInclude Include="src\Helicopter\HeliSheet.hpp" />
+    <ClInclude Include="src\Helicopter\Hooks.hpp" />
+    <ClInclude Include="src\Helicopter\Interfaces.hpp" />
+    <ClInclude Include="src\Helicopter\SimpleChopper.hpp" />
+    <ClInclude Include="src\Helicopter\SoundAI.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
-    <ClCompile Include="src\Config\Ini.cpp" />
-    <ClCompile Include="src\Game\AIActionHeliExit.cpp" />
-    <ClCompile Include="src\Game\AIActionHeliPursuit.cpp" />
-    <ClCompile Include="src\Game\AICopManager.cpp" />
-    <ClCompile Include="src\Game\AIPerpVehicle.cpp" />
-    <ClCompile Include="src\Game\AIVehicleHelicopter.cpp" />
-    <ClCompile Include="src\Game\HeliSheet.cpp" />
-    <ClCompile Include="src\Game\Interfaces.cpp" />
-    <ClCompile Include="src\Game\SimpleChopper.cpp" />
+    <ClCompile Include="src\Helicopter\AIActionHeliExit.cpp" />
+    <ClCompile Include="src\Helicopter\AIActionHeliPursuit.cpp" />
+    <ClCompile Include="src\Helicopter\AICopManager.cpp" />
+    <ClCompile Include="src\Helicopter\AIPerpVehicle.cpp" />
+    <ClCompile Include="src\Helicopter\AIVehicleHelicopter.cpp" />
+    <ClCompile Include="src\Helicopter\HeliSheet.cpp" />
+    <ClCompile Include="src\Helicopter\Hooks.cpp" />
+    <ClCompile Include="src\Helicopter\Interfaces.cpp" />
+    <ClCompile Include="src\Helicopter\SimpleChopper.cpp" />
+    <ClCompile Include="src\Helicopter\SoundAI.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
