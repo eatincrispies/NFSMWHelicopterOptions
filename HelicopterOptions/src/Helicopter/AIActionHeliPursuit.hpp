@@ -1,7 +1,6 @@
 #pragma once
 #include "Interfaces.hpp"
 
-class IAIHelicopter;
 class IPursuitAI;
 
 class AIActionHeliPursuit {
@@ -22,6 +21,13 @@ class AIActionHeliPursuit {
         return mPursuitMode == kSkid_Hit_Approach || mPursuitMode == kSkid_Hit_Strike;
     }
 
+    bool IsCrushing() const;
+    void StraightLinePursuit();
+    void ChasePerp();
+    void StartSearch();
+    void SetNextSearchPoint();
+    void SearchForPerp();
+    UMath::Vector3 SearchLookAt(const UMath::Vector3& myPosition) const;
     void SkidHitPursuit();
     void CrushPursuit();
     void StartCrush();

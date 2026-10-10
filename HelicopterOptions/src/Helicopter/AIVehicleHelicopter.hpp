@@ -9,6 +9,8 @@ struct HeliSheetCoordinate {
 
 class AIVehicleHelicopter {
   public:
+    static void InstallPatches();
+    static void Refresh();
     static bool HookOnDriving();
     static bool HookCanSeeTarget();
 
@@ -18,6 +20,8 @@ class AIVehicleHelicopter {
 
     void UpdateHelicopterOptions();
     void BeginHelicopter(const UMath::Vector3& position);
+    void AvoidCamera(UMath::Vector3& dest);
+    void AvoidCameraHook(UMath::Vector3& dest);
 
     unsigned char       mBehavior[0x34];
     ISimable*           mIOwner;

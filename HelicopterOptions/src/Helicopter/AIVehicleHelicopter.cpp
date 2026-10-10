@@ -8,7 +8,6 @@
 #include "AIActionHeliPursuit.hpp"
 #include "AIPerpVehicle.hpp"
 #include "HeliSheet.hpp"
-#include "Hooks.hpp"
 #include "SimpleChopper.hpp"
 
 namespace {
@@ -18,6 +17,11 @@ namespace {
     constexpr uint8_t   kOnDrivingPrologue[5]                  = { 0x83, 0xEC, 0x68, 0x53, 0x55 };
     constexpr uintptr_t kCanSeeTargetHeliLOSDistance           = 0x00417146u;
     constexpr uint8_t   kCanSeeTargetHeliLOSDistancePrologue[8] = { 0x89, 0x54, 0x24, 0x24, 0xD9, 0x44, 0x24, 0x24 };
+    constexpr uintptr_t kAvoidCamera                           = 0x00417790u;
+
+    constexpr Patch::CallSite     kOnDrivingAvoidCamera     = { 0x00417B02u, kAvoidCamera };
+    constexpr Patch::FloatOperand kOnDrivingStoppingRatio   = { 0x00417C88u, { 0xD8, 0x0D }, 0x008910FCu };
+    constexpr Patch::FloatOperand kOnDrivingBrakeSpeedScale = { 0x00417CA7u, { 0xD8, 0x0D }, 0x00891054u };
 
     static_assert(offsetof(AIVehicleHelicopter, mIOwner) == 0x34, "Behavior::mIOwner");
     static_assert(offsetof(AIVehicleHelicopter, mDriveSpeed) == 0x84, "AIVehicle::mDriveSpeed");
@@ -41,6 +45,13 @@ namespace {
     unsigned      gFrames = 0;
     float         gElapsed = 0.0f;
     bool          gReported = false;
+
+    struct Brake {
+        float stoppingRatio;
+        float speedScale;
+    };
+
+    Brake         gBrake = {};
 
     unsigned long gLastRotateMs = 0;
     unsigned long gLastFuelWarningMs = 0;
@@ -111,6 +122,21 @@ bool HeliVehicleActive() {
     return Game::Global<AIVehicleHelicopter*>(kgHeliVehicle) != nullptr;
 }
 
+void AIVehicleHelicopter::InstallPatches() {
+    Refresh();
+
+    Patch::Begin("AIVehicleHelicopter::OnDriving");
+    Patch::RedirectCall("AvoidCamera", kOnDrivingAvoidCamera, Game::MethodAddress(&AIVehicleHelicopter::AvoidCameraHook));
+    Patch::RedirectFloat("stopping distance ratio", kOnDrivingStoppingRatio, &gBrake.stoppingRatio);
+    Patch::RedirectFloat("braking mDriveSpeed scale", kOnDrivingBrakeSpeedScale, &gBrake.speedScale);
+    Patch::Commit();
+}
+
+void AIVehicleHelicopter::Refresh() {
+    gBrake.stoppingRatio = gCfg.StoppingRatio;
+    gBrake.speedScale    = gCfg.BrakeSpeedScale;
+}
+
 bool AIVehicleHelicopter::HookOnDriving() {
     InitClock();
     return Detour::Install("AIVehicleHelicopter::OnDriving", kOnDriving, kOnDrivingPrologue, sizeof(kOnDrivingPrologue), &OnDrivingEntry);
@@ -155,6 +181,16 @@ void AIVehicleHelicopter::UpdateHelicopterOptions() {
     if (newHelicopter) return;
 
     SimpleChopper::ScaleMotionFilters(SmoothedFrames());
+}
+
+void AIVehicleHelicopter::AvoidCamera(UMath::Vector3& dest) {
+    Game::ThisCall<void>(kAvoidCamera, this, &dest);
+}
+
+void AIVehicleHelicopter::AvoidCameraHook(UMath::Vector3& dest) {
+    const AIActionHeliPursuit* pursuit = AIActionHeliPursuit::Find(GetRigidBody());
+    if (pursuit != nullptr && pursuit->IsCrushing()) return;
+    AvoidCamera(dest);
 }
 
 void AIVehicleHelicopter::BeginHelicopter(const UMath::Vector3& position) {

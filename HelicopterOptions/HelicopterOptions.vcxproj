@@ -16,6 +16,7 @@
     <ProjectGuid>{8c1ed084-ee52-453b-a60f-d69eacc7440e}</ProjectGuid>
     <RootNamespace>HelicopterOptions</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>NFSMWHelicopterOptions</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -90,7 +91,6 @@
     <ClInclude Include="src\Helicopter\AIPerpVehicle.hpp" />
     <ClInclude Include="src\Helicopter\AIVehicleHelicopter.hpp" />
     <ClInclude Include="src\Helicopter\HeliSheet.hpp" />
-    <ClInclude Include="src\Helicopter\Hooks.hpp" />
     <ClInclude Include="src\Helicopter\Interfaces.hpp" />
     <ClInclude Include="src\Helicopter\SimpleChopper.hpp" />
     <ClInclude Include="src\Helicopter\SoundAI.hpp" />
@@ -103,7 +103,6 @@
     <ClCompile Include="src\Helicopter\AIPerpVehicle.cpp" />
     <ClCompile Include="src\Helicopter\AIVehicleHelicopter.cpp" />
     <ClCompile Include="src\Helicopter\HeliSheet.cpp" />
-    <ClCompile Include="src\Helicopter\Hooks.cpp" />
     <ClCompile Include="src\Helicopter\Interfaces.cpp" />
     <ClCompile Include="src\Helicopter\SimpleChopper.cpp" />
     <ClCompile Include="src\Helicopter\SoundAI.cpp" />

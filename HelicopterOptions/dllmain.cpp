@@ -5,7 +5,6 @@
 #include "src/Helicopter/AICopManager.hpp"
 #include "src/Helicopter/AIPerpVehicle.hpp"
 #include "src/Helicopter/AIVehicleHelicopter.hpp"
-#include "src/Helicopter/Hooks.hpp"
 #include "src/Helicopter/SimpleChopper.hpp"
 
 namespace {
@@ -23,6 +22,7 @@ namespace {
         Ini::Load(gModule);
 
         AIActionHeliPursuit::InstallPatches();
+        AIVehicleHelicopter::InstallPatches();
         SimpleChopper::InstallPatches();
         AIActionHeliExit::InstallPatches();
         AICopManager::InstallPatches();

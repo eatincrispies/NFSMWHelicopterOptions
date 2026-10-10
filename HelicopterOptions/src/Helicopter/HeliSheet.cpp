@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "HeliSheet.hpp"
 #include "AIActionHeliPursuit.hpp"
-#include "Hooks.hpp"
+#include "AIPerpVehicle.hpp"
 
 namespace {
 
