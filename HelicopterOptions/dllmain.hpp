@@ -107,7 +107,7 @@ namespace Patch {
     void DataFloat(Log::Name name, uintptr_t va, float vanilla, float value);
     bool Commit();
 
-    bool RewritePushedFloat(const FloatPush& site, float from, float to);
+    bool RewritePushedFloat(Log::Name name, const FloatPush& site, float from, float to);
 
     int  SkippedGroups();
     int  FailedGroups();

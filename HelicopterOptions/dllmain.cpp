@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <cerrno>
 #include <cfloat>
 #include <cmath>
 #include <cstdarg>
@@ -31,15 +32,26 @@ namespace Log {
         CRITICAL_SECTION gLock;
         bool             gLockReady = false;
         char             gPath[MAX_PATH] = "";
+        DWORD            gStartMs = 0;
 
-        void Write(const char* prefix, const char* format, va_list args) {
+        void WriteHeader() {
+            const std::time_t now = std::time(nullptr);
+            std::fprintf(gFile, "NFSMWHelicopterOptions trace  %s", std::ctime(&now));
+            std::fprintf(gFile, "%10s %5s %3s %s\n", "t", "tid", "lvl", "event");
+            std::fflush(gFile);
+        }
+
+        void Write(const char* level, const char* format, va_list args) {
             char text[1024];
             std::vsnprintf(text, sizeof(text), format, args);
+            const DWORD elapsed = GetTickCount() - gStartMs;
             char line[1100];
-            std::snprintf(line, sizeof(line), "[HelicopterOptions] %s%s\n", prefix, text);
+            std::snprintf(line, sizeof(line), "%6lu.%03lu %5lu %s %s\n", elapsed / 1000, elapsed % 1000, GetCurrentThreadId(), level, text);
+            char debugLine[1124];
+            std::snprintf(debugLine, sizeof(debugLine), "[HelicopterOptions] %s", line);
 
             if (gLockReady) EnterCriticalSection(&gLock);
-            OutputDebugStringA(line);
+            OutputDebugStringA(debugLine);
             if (gFile) {
                 std::fputs(line, gFile);
                 std::fflush(gFile);
@@ -55,6 +67,7 @@ namespace Log {
             gLockReady = true;
         }
         if (gFile) return;
+        gStartMs = GetTickCount();
 
         char directory[MAX_PATH] = "";
         const DWORD length = GetModuleFileNameA(static_cast<HMODULE>(module), directory, MAX_PATH);
@@ -69,11 +82,7 @@ namespace Log {
         std::snprintf(gPath, sizeof(gPath), "%s\\NFSMWHelicopterOptions.log", folder);
 
         gFile = std::fopen(gPath, "w");
-        if (gFile) {
-            const std::time_t now = std::time(nullptr);
-            std::fprintf(gFile, "NFSMWHelicopterOptions log\nSession start: %s\n", std::ctime(&now));
-            std::fflush(gFile);
-        }
+        if (gFile) WriteHeader();
     }
 
     void Close() {
@@ -92,6 +101,7 @@ namespace Log {
             DeleteFileA(old);
             MoveFileA(gPath, old);
             gFile = std::fopen(gPath, "w");
+            if (gFile) WriteHeader();
         }
         if (gLockReady) LeaveCriticalSection(&gLock);
     }
@@ -99,21 +109,21 @@ namespace Log {
     void Info(const char* format, ...) {
         va_list args;
         va_start(args, format);
-        Write("", format, args);
+        Write("INF", format, args);
         va_end(args);
     }
 
     void Warn(const char* format, ...) {
         va_list args;
         va_start(args, format);
-        Write("WARNING: ", format, args);
+        Write("WRN", format, args);
         va_end(args);
     }
 
     void Error(const char* format, ...) {
         va_list args;
         va_start(args, format);
-        Write("ERROR: ", format, args);
+        Write("ERR", format, args);
         va_end(args);
     }
 
@@ -262,20 +272,24 @@ namespace Detour {
             if (gDetours[i].va == va) return true;
 
         if (length < 5 || length > kMaxStolenBytes || gCount == kMaxDetours) {
-            Log::Error("%s was not hooked: the detour table is full or the prologue length is wrong.", name);
+            Log::Error("detour %s  0x%08X len=%u slots=%d/%d  length or table out of range", name, va, static_cast<unsigned>(length), gCount,
+                       kMaxDetours);
             return false;
         }
+
+        char expected[kMaxStolenBytes * 2 + 1];
+        Memory::DescribeBytes(reinterpret_cast<uintptr_t>(prologue), length, expected, sizeof(expected));
 
         if (!Memory::CheckBytes(va, prologue, length)) {
             char actual[kMaxStolenBytes * 2 + 1];
             Memory::DescribeBytes(va, length, actual, sizeof(actual));
-            Log::Warn("%s was not hooked: its first bytes are %s, so another mod has already changed it.", name, actual);
+            Log::Warn("detour %s  0x%08X len=%u read %s, expected %s  SKIP", name, va, static_cast<unsigned>(length), actual, expected);
             return false;
         }
 
         const uint8_t* trampoline = BuildTrampoline(va, prologue, length, entry);
         if (!trampoline) {
-            Log::Error("%s was not hooked: no memory for the trampoline.", name);
+            Log::Error("detour %s  0x%08X VirtualAlloc(64, PAGE_EXECUTE_READWRITE) GetLastError=%lu", name, va, GetLastError());
             return false;
         }
 
@@ -286,7 +300,7 @@ namespace Detour {
         for (size_t i = 5; i < length; ++i) jump[i] = kNop;
 
         if (!Memory::WriteCode(va, jump, length)) {
-            Log::Error("%s was not hooked: the jump could not be written.", name);
+            Log::Error("detour %s  0x%08X VirtualProtect GetLastError=%lu", name, va, GetLastError());
             return false;
         }
 
@@ -295,15 +309,25 @@ namespace Detour {
         slot.va = va;
         slot.length = length;
         std::memcpy(slot.original, prologue, length);
-        Log::Info("%s hooked at 0x%08lX.", name, static_cast<unsigned long>(va));
+
+        char written[kMaxStolenBytes * 2 + 1];
+        Memory::DescribeBytes(va, length, written, sizeof(written));
+        Log::Info("detour %s  0x%08X len=%u %s -> %s  trampoline=0x%p entry=0x%p  slot %d/%d", name, va, static_cast<unsigned>(length), expected,
+                  written, trampoline, entry, gCount, kMaxDetours);
         return true;
     }
 
     void RemoveAll() {
         while (gCount > 0) {
             const Installed& slot = gDetours[--gCount];
-            if (!Memory::WriteCode(slot.va, slot.original, slot.length))
-                Log::Warn("%s could not be unhooked.", slot.name);
+            char current[kMaxStolenBytes * 2 + 1];
+            char original[kMaxStolenBytes * 2 + 1];
+            Memory::DescribeBytes(slot.va, slot.length, current, sizeof(current));
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(slot.original), slot.length, original, sizeof(original));
+            if (Memory::WriteCode(slot.va, slot.original, slot.length))
+                Log::Info("detour %s  0x%08X %s -> %s  removed", slot.name, slot.va, current, original);
+            else
+                Log::Warn("detour %s  0x%08X holds %s, write of %s failed", slot.name, slot.va, current, original);
         }
     }
 
@@ -316,14 +340,21 @@ namespace Patch {
         constexpr uint8_t kPushImm32 = 0x68;
         constexpr uint8_t kCallRel32 = 0xE8;
 
+        enum Kind : uint8_t {
+            kFloatOperand,
+            kFloatPush,
+            kCall,
+            kDataFloat,
+        };
+
         struct Entry {
             Log::Name name;
+            Kind      kind;
             uintptr_t guardVa;
             uint8_t   guard[6];
             size_t    guardLength;
             uintptr_t writeVa;
             uint8_t   bytes[4];
-            bool      data;
             float     vanilla;
         };
 
@@ -344,27 +375,27 @@ namespace Patch {
             float wanted = 0.0f;
             std::memcpy(&wanted, entry.bytes, sizeof(wanted));
             if (!Memory::Read(entry.guardVa, &current, sizeof(current))) {
-                Log::Warn("%s: %s at 0x%08lX could not be read.", gGroup, entry.name, static_cast<unsigned long>(entry.guardVa));
+                Log::Warn("patch %s | %s  [0x%08X] unreadable", gGroup, entry.name, entry.guardVa);
                 return false;
             }
             if (std::fabs(current - entry.vanilla) <= 0.001f || std::fabs(current - wanted) <= 0.001f)
                 return true;
-            Log::Warn("%s: %s at 0x%08lX holds %g instead of the game's %g.", gGroup, entry.name,
-                      static_cast<unsigned long>(entry.guardVa), current, entry.vanilla);
+            Log::Warn("patch %s | %s  [0x%08X]=%g, expected %g or %g", gGroup, entry.name, entry.guardVa, current, entry.vanilla, wanted);
             return false;
         }
 
         bool CheckCode(const Entry& entry) {
             if (Memory::CheckBytes(entry.guardVa, entry.guard, entry.guardLength)) return true;
             char actual[16];
+            char expected[16];
             Memory::DescribeBytes(entry.guardVa, entry.guardLength, actual, sizeof(actual));
-            Log::Warn("%s: %s at 0x%08lX holds %s, not the game's code.", gGroup, entry.name,
-                      static_cast<unsigned long>(entry.guardVa), actual);
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(entry.guard), entry.guardLength, expected, sizeof(expected));
+            Log::Warn("patch %s | %s  0x%08X read %s, expected %s", gGroup, entry.name, entry.guardVa, actual, expected);
             return false;
         }
 
         bool Check(const Entry& entry) {
-            return entry.data ? CheckData(entry) : CheckCode(entry);
+            return entry.kind == kDataFloat ? CheckData(entry) : CheckCode(entry);
         }
 
         void PushBytes(uint8_t* out, float value) {
@@ -376,6 +407,60 @@ namespace Patch {
             return static_cast<uint32_t>(target) - static_cast<uint32_t>(call + 5);
         }
 
+#if defined(_DEBUG)
+        const char* FpuMnemonic(const uint8_t* opcode) {
+            static const char* const kD8[] = { "fadd", "fmul", "fcom", "fcomp", "fsub", "fsubr", "fdiv", "fdivr" };
+            static const char* const kD9[] = { "fld", "?", "fst", "fstp", "fldenv", "fldcw", "fnstenv", "fnstcw" };
+            const int reg = (opcode[1] >> 3) & 7;
+            if (opcode[0] == 0xD8) return kD8[reg];
+            if (opcode[0] == 0xD9) return kD9[reg];
+            return "?";
+        }
+
+        float ReadFloat(uintptr_t va) {
+            float value = 0.0f;
+            Memory::Read(va, &value, sizeof(value));
+            return value;
+        }
+
+        void LogWrite(const Entry& entry, const uint8_t* before) {
+            char from[9];
+            char to[9];
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(before), 4, from, sizeof(from));
+            Memory::DescribeBytes(entry.writeVa, 4, to, sizeof(to));
+
+            uint32_t oldWord = 0;
+            uint32_t newWord = 0;
+            float    oldFloat = 0.0f;
+            float    newFloat = 0.0f;
+            std::memcpy(&oldWord, before, sizeof(oldWord));
+            std::memcpy(&newWord, entry.bytes, sizeof(newWord));
+            std::memcpy(&oldFloat, before, sizeof(oldFloat));
+            std::memcpy(&newFloat, entry.bytes, sizeof(newFloat));
+
+            switch (entry.kind) {
+            case kFloatOperand:
+                Log::Info("patch %s | %s  0x%08X %02X %02X %s [0x%08X]=%g -> [0x%08X]=%g  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa,
+                          entry.guard[0], entry.guard[1], FpuMnemonic(entry.guard), oldWord, ReadFloat(oldWord), newWord, ReadFloat(newWord),
+                          entry.writeVa, from, to);
+                break;
+            case kFloatPush:
+                Log::Info("patch %s | %s  0x%08X 68 push %g -> %g  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa, oldFloat, newFloat,
+                          entry.writeVa, from, to);
+                break;
+            case kCall:
+                Log::Info("patch %s | %s  0x%08X E8 call 0x%08X -> 0x%08X  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa,
+                          entry.guardVa + 5 + oldWord, entry.guardVa + 5 + newWord, entry.writeVa, from, to);
+                break;
+            case kDataFloat:
+                Log::Info("patch %s | %s  [0x%08X] float %g -> %g  %s -> %s", gGroup, entry.name, entry.writeVa, oldFloat, newFloat, from, to);
+                break;
+            }
+        }
+#else
+        void LogWrite(const Entry&, const uint8_t*) {}
+#endif
+
     }
 
     void Begin(Log::Name group) {
@@ -386,6 +471,7 @@ namespace Patch {
     void RedirectFloat(Log::Name name, const FloatOperand& site, const float* value) {
         Entry entry = {};
         entry.name = name;
+        entry.kind = kFloatOperand;
         entry.guardVa = site.va;
         entry.guard[0] = site.opcode[0];
         entry.guard[1] = site.opcode[1];
@@ -401,6 +487,7 @@ namespace Patch {
     void PushFloat(Log::Name name, const FloatPush& site, float value) {
         Entry entry = {};
         entry.name = name;
+        entry.kind = kFloatPush;
         entry.guardVa = site.va;
         PushBytes(entry.guard, site.value);
         entry.guardLength = 5;
@@ -412,6 +499,7 @@ namespace Patch {
     void RedirectCall(Log::Name name, const CallSite& site, const void* replacement) {
         Entry entry = {};
         entry.name = name;
+        entry.kind = kCall;
         entry.guardVa = site.va;
         entry.guard[0] = kCallRel32;
         const uint32_t original = CallOffset(site.va, site.target);
@@ -426,9 +514,9 @@ namespace Patch {
     void DataFloat(Log::Name name, uintptr_t va, float vanilla, float value) {
         Entry entry = {};
         entry.name = name;
+        entry.kind = kDataFloat;
         entry.guardVa = va;
         entry.writeVa = va;
-        entry.data = true;
         entry.vanilla = vanilla;
         std::memcpy(entry.bytes, &value, sizeof(value));
         gPending.push_back(entry);
@@ -437,7 +525,7 @@ namespace Patch {
     bool Commit() {
         for (const Entry& entry : gPending) {
             if (!Check(entry)) {
-                Log::Warn("%s: skipped, because another mod has already changed this code.", gGroup);
+                Log::Warn("patch %s  SKIP  %u write(s) discarded", gGroup, static_cast<unsigned>(gPending.size()));
                 ++gSkipped;
                 gPending.clear();
                 return false;
@@ -451,8 +539,8 @@ namespace Patch {
             original.va = entry.writeVa;
             if (!Memory::Read(entry.writeVa, original.bytes, sizeof(original.bytes))
                 || !Memory::WriteCode(entry.writeVa, entry.bytes, sizeof(entry.bytes))) {
-                Log::Error("%s: %s at 0x%08lX could not be written; the group was rolled back.", gGroup, entry.name,
-                           static_cast<unsigned long>(entry.writeVa));
+                Log::Error("patch %s | %s  @0x%08X write failed GetLastError=%lu, %u write(s) rolled back", gGroup, entry.name, entry.writeVa,
+                           GetLastError(), static_cast<unsigned>(gJournal.size() - start));
                 while (gJournal.size() > start) {
                     const Original& undo = gJournal.back();
                     Memory::WriteCode(undo.va, undo.bytes, sizeof(undo.bytes));
@@ -462,18 +550,32 @@ namespace Patch {
                 gPending.clear();
                 return false;
             }
+            LogWrite(entry, original.bytes);
             gJournal.push_back(original);
         }
 
-        Log::Info("%s: %u patch(es) applied.", gGroup, static_cast<unsigned>(gPending.size()));
+        Log::Info("patch %s  OK  %u write(s), journal %u", gGroup, static_cast<unsigned>(gPending.size()), static_cast<unsigned>(gJournal.size()));
         gPending.clear();
         return true;
     }
 
-    bool RewritePushedFloat(const FloatPush& site, float from, float to) {
+    bool RewritePushedFloat(Log::Name name, const FloatPush& site, float from, float to) {
         uint8_t expected[5];
         PushBytes(expected, from);
-        return Memory::CheckBytes(site.va, expected, sizeof(expected)) && Memory::WriteCode(site.va + 1, &to, sizeof(to));
+        if (!Memory::CheckBytes(site.va, expected, sizeof(expected))) {
+            char actual[16];
+            char wanted[16];
+            Memory::DescribeBytes(site.va, sizeof(expected), actual, sizeof(actual));
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(expected), sizeof(expected), wanted, sizeof(wanted));
+            Log::Warn("patch %s  0x%08X read %s, expected %s  live rewrite off", name, site.va, actual, wanted);
+            return false;
+        }
+        if (!Memory::WriteCode(site.va + 1, &to, sizeof(to))) {
+            Log::Error("patch %s  @0x%08X write failed GetLastError=%lu", name, site.va + 1, GetLastError());
+            return false;
+        }
+        Log::Info("patch %s  0x%08X 68 push %g -> %g", name, site.va, from, to);
+        return true;
     }
 
     int SkippedGroups() {
@@ -487,8 +589,14 @@ namespace Patch {
     void RestoreAll() {
         while (!gJournal.empty()) {
             const Original& original = gJournal.back();
-            if (!Memory::WriteCode(original.va, original.bytes, sizeof(original.bytes)))
-                Log::Warn("%s at 0x%08lX could not be restored.", original.name, static_cast<unsigned long>(original.va));
+            char current[9];
+            char restored[9];
+            Memory::DescribeBytes(original.va, sizeof(original.bytes), current, sizeof(current));
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(original.bytes), sizeof(original.bytes), restored, sizeof(restored));
+            if (Memory::WriteCode(original.va, original.bytes, sizeof(original.bytes)))
+                Log::Info("restore %s  @0x%08X %s -> %s", original.name, original.va, current, restored);
+            else
+                Log::Warn("restore %s  @0x%08X holds %s, write of %s failed", original.name, original.va, current, restored);
             gJournal.pop_back();
         }
     }
@@ -657,7 +765,7 @@ namespace Ini {
                         int* problems) {
             if (setting.toggle) {
                 if (_stricmp(text, "true") != 0 && _stricmp(text, "false") != 0) {
-                    Log::Warn("General.ini line %d: [%s] %s = %s must be true or false.", lineNumber, section, key, text);
+                    Log::Warn("ini L%d [%s] %s %s=%s  not bool", lineNumber, section, key, setting.name, text);
                     ++*problems;
                     return false;
                 }
@@ -665,14 +773,14 @@ namespace Ini {
                 return true;
             }
             if (!ParseFloat(text, value)) {
-                Log::Warn("General.ini line %d: [%s] %s = %s is not a number.", lineNumber, section, key, text);
+                Log::Warn("ini L%d [%s] %s %s=%s  not float", lineNumber, section, key, setting.name, text);
                 ++*problems;
                 return false;
             }
             if (*value < setting.min || *value > setting.max) {
                 const float clamped = *value < setting.min ? setting.min : setting.max;
-                Log::Warn("General.ini line %d: [%s] %s %s = %g is outside %g to %g; using %g.", lineNumber, section, key, setting.name,
-                          *value, setting.min, setting.max, clamped);
+                Log::Warn("ini L%d [%s] %s %s=%g  clamp [%g, %g] -> %g", lineNumber, section, key, setting.name, *value, setting.min, setting.max,
+                          clamped);
                 *value = clamped;
                 ++*problems;
             }
@@ -711,7 +819,7 @@ namespace Ini {
             if (*text == '[') {
                 char* close = std::strchr(text, ']');
                 if (!close) {
-                    Log::Warn("General.ini line %d: \"%s\" is not a section header.", lineNumber, text);
+                    Log::Warn("ini L%d \"%s\"  no ']'", lineNumber, text);
                     ++*problems;
                     *first = -1;
                     return;
@@ -721,7 +829,7 @@ namespace Ini {
                 Trim(section);
                 *first = FindSection(section);
                 if (*first < 0) {
-                    Log::Warn("General.ini line %d: unknown section [%s] ignored.", lineNumber, section);
+                    Log::Warn("ini L%d [%s]  unknown section", lineNumber, section);
                     ++*unknownSections;
                 }
                 return;
@@ -730,7 +838,7 @@ namespace Ini {
 
             char* equals = std::strchr(text, '=');
             if (!equals) {
-                Log::Warn("General.ini line %d: \"%s\" has no '='.", lineNumber, text);
+                Log::Warn("ini L%d \"%s\"  no '='", lineNumber, text);
                 ++*problems;
                 return;
             }
@@ -743,12 +851,12 @@ namespace Ini {
             bool race = false;
             const int level = ParseLevel(key, &race);
             if (level < 0) {
-                Log::Warn("General.ini line %d: [%s] \"%s\" is not default, heat01-heat10 or race01-race10.", lineNumber, section, key);
+                Log::Warn("ini L%d [%s] %s  key not default/heat01-10/race01-10", lineNumber, section, key);
                 ++*problems;
                 return;
             }
             if (level == 0 && !gSettings[*first]->hasDefault) {
-                Log::Warn("General.ini line %d: [%s] can't have a default value; set heat01-heat10 instead.", lineNumber, section);
+                Log::Warn("ini L%d [%s] default  no default slot, heat01-10/race01-10 only", lineNumber, section);
                 ++*problems;
                 return;
             }
@@ -756,7 +864,7 @@ namespace Ini {
             const int parts = PartCount(*first);
             char* partText[kMostParts] = {};
             if (SplitParts(valueText, partText) != parts) {
-                Log::Warn("General.ini line %d: [%s] %s needs %d value(s) separated by commas.", lineNumber, section, key, parts);
+                Log::Warn("ini L%d [%s] %s  %d comma value(s) expected", lineNumber, section, key, parts);
                 ++*problems;
                 return;
             }
@@ -769,7 +877,7 @@ namespace Ini {
             for (int part = 0; part < parts; ++part)
                 stored = Store(*first + part, level, race, values[part]) && stored;
             if (!stored) {
-                Log::Warn("General.ini line %d: [%s] %s is set twice; the first value is kept.", lineNumber, section, key);
+                Log::Warn("ini L%d [%s] %s  duplicate, first kept", lineNumber, section, key);
                 ++*problems;
                 return;
             }
@@ -803,13 +911,38 @@ namespace Ini {
             }
             std::fclose(file);
 
-            Log::Info("General.ini: %d value(s) read%s.", read, problems ? ", with the problems listed above" : "");
-            if (unknownSections)
-                Log::Warn("General.ini: %d section(s) were not recognised. Sections are named [Helicopter:...], such as "
-                          "[Helicopter:Turning]; a General.ini from an older version has to be replaced.",
-                          unknownSections);
+            if (problems + unknownSections == 0)
+                Log::Info("ini %s  lines=%d read=%d", path, lineNumber, read);
+            else
+                Log::Warn("ini %s  lines=%d read=%d errors=%d unknownSections=%d", path, lineNumber, read, problems, unknownSections);
             return true;
         }
+
+#if defined(_DEBUG)
+        const void* Address(const Setting& setting) {
+            return setting.toggle ? static_cast<const void*>(setting.toggle) : static_cast<const void*>(setting.number);
+        }
+
+        void LogTable() {
+            for (int i = 0; i < kCount; ++i) {
+                const Setting& setting = *gSettings[i];
+                const Values&  values = gValues[i];
+                char base[16] = "-";
+                if (values.hasBase) std::snprintf(base, sizeof(base), "%g", values.base);
+                Log::Info("ini %2d [%s] %s  @0x%p %s=%g vanilla=%g default=%s heat=%03X race=%03X range=[%g, %g]", i, setting.section, setting.name,
+                          Address(setting), setting.toggle ? "bool" : "float", Get(i), values.vanilla, base, values.hasHeat, values.hasRace, setting.min,
+                          setting.max);
+            }
+        }
+
+        void LogChange(int index, float previous) {
+            const Setting& setting = *gSettings[index];
+            Log::Info("  [%s] %s  @0x%p %g -> %g", setting.section, setting.name, Address(setting), previous, Get(index));
+        }
+#else
+        void LogTable() {}
+        void LogChange(int, float) {}
+#endif
 
     }
 
@@ -821,7 +954,7 @@ namespace Ini {
         char directory[MAX_PATH] = "";
         const DWORD length = GetModuleFileNameA(static_cast<HMODULE>(module), directory, MAX_PATH);
         if (length == 0 || length >= MAX_PATH) {
-            Log::Error("The scripts folder could not be located; every setting uses the game's own value.");
+            Log::Error("ini  GetModuleFileNameA length=%lu GetLastError=%lu, vanilla values", length, GetLastError());
             return;
         }
         if (char* slash = std::strrchr(directory, '\\')) slash[1] = '\0';
@@ -829,10 +962,11 @@ namespace Ini {
         char path[MAX_PATH];
         std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\General.ini", directory);
         if (!ReadFile(path))
-            Log::Warn("%s was not found; every setting uses the game's own value.", path);
+            Log::Warn("ini %s  fopen errno=%d, vanilla values", path, errno);
 
         for (int i = 0; i < kCount; ++i)
             Set(i, Resolve(gValues[i], 0, false));
+        LogTable();
     }
 
     bool ApplyHeat(int level, bool racing) {
@@ -854,9 +988,9 @@ namespace Ini {
             Set(i, value);
         }
 
-        Log::Info("Heat %d (%s): %d setting(s) changed.", level, racing ? "race" : "free roam", count);
+        Log::Info("heat level=%d racing=%d  %d change(s)", level, racing ? 1 : 0, count);
         for (int n = 0; n < count; ++n)
-            Log::Info("  [%s] %s %g -> %g", gSettings[changed[n]]->section, gSettings[changed[n]]->name, previous[n], Get(changed[n]));
+            LogChange(changed[n], previous[n]);
 
         return count > 0;
     }
@@ -903,14 +1037,16 @@ void __cdecl AIPerpVehicle::SetHeatEntry(Detour::Registers* registers) {
     AIPerpVehicle* perp = FromIPerpetrator(registers->ecx);
     if (!perp || !perp->IsLocalPlayer()) return;
 
+    float heat = 0.0f;
+    const bool read = Memory::Read(registers->esp + kSetHeatArgument, &heat, sizeof(heat));
+    gPlayerPerpVTable = IPerpetratorVTable(perp);
     if (perp != gPlayerPerp) {
         gPlayerPerp = perp;
-        Log::Info("Heat now follows your car (AIPerpVehicle %p).", static_cast<void*>(perp));
+        Log::Info("AIPerpVehicle::SetHeat  ecx=0x%08X this=0x%p IPerpetrator[+0x758] vtbl=0x%08X mIOwner[+0x34]=0x%p mHeat[+0x774]=%g "
+                  "[esp+0x08]=%g mWasInRaceEventLastHeatUpdate[+0x786]=%d",
+                  registers->ecx, perp, gPlayerPerpVTable, perp->mIOwner, perp->mHeat, heat, perp->mWasInRaceEventLastHeatUpdate);
     }
-    gPlayerPerpVTable = IPerpetratorVTable(perp);
-
-    float heat = 0.0f;
-    if (!Memory::Read(registers->esp + kSetHeatArgument, &heat, sizeof(heat)) || !IsHeatLevel(heat)) return;
+    if (!read || !IsHeatLevel(heat)) return;
     ApplyHeat(static_cast<int>(heat), perp->mWasInRaceEventLastHeatUpdate);
 }
 
@@ -937,11 +1073,32 @@ namespace {
 
     HMODULE gModule = nullptr;
 
+#if defined(_DEBUG)
+    void LogImage(Log::Name label, HMODULE module) {
+        const uintptr_t    base = reinterpret_cast<uintptr_t>(module);
+        IMAGE_DOS_HEADER   dos = {};
+        IMAGE_NT_HEADERS32 nt = {};
+        char               path[MAX_PATH] = "";
+        GetModuleFileNameA(module, path, MAX_PATH);
+        if (!Memory::Read(base, &dos, sizeof(dos)) || !Memory::Read(base + dos.e_lfanew, &nt, sizeof(nt))) {
+            Log::Warn("image %s  base=0x%08X PE header unreadable  %s", label, base, path);
+            return;
+        }
+        Log::Info("image %s  base=0x%08X SizeOfImage=0x%08lX EntryPoint=0x%08lX TimeDateStamp=0x%08lX CheckSum=0x%08lX  %s", label, base,
+                  nt.OptionalHeader.SizeOfImage, base + nt.OptionalHeader.AddressOfEntryPoint, nt.FileHeader.TimeDateStamp,
+                  nt.OptionalHeader.CheckSum, path);
+    }
+#else
+    void LogImage(Log::Name, HMODULE) {}
+#endif
+
     DWORD WINAPI Initialize(void*) {
         Sleep(1000);
 
         Log::Open(gModule);
-        Log::Info("NFSMWHelicopterOptions %s starting.", kVersion);
+        Log::Info("init  NFSMWHelicopterOptions %s  pid=%lu", kVersion, GetCurrentProcessId());
+        LogImage("speed.exe", GetModuleHandleA(nullptr));
+        LogImage("NFSMWHelicopterOptions.asi", gModule);
 
         Ini::Load(gModule);
 
@@ -955,11 +1112,10 @@ namespace {
         AIVehicleHelicopter::HookOnDriving();
         AIVehicleHelicopter::HookCanSeeTarget();
 
-        const int problems = Patch::SkippedGroups() + Patch::FailedGroups();
-        if (problems == 0)
-            Log::Info("Ready.");
+        if (Patch::SkippedGroups() + Patch::FailedGroups() == 0)
+            Log::Info("init  ready  skipped=0 failed=0");
         else
-            Log::Warn("Ready, but %d patch group(s) are inactive; see the lines above.", problems);
+            Log::Warn("init  ready  skipped=%d failed=%d", Patch::SkippedGroups(), Patch::FailedGroups());
         return 0;
     }
 
@@ -974,6 +1130,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
         break;
 
     case DLL_PROCESS_DETACH:
+        Log::Info("detach  lpReserved=0x%p", reserved);
         if (reserved == nullptr) {
             Detour::RemoveAll();
             SimpleChopper::RestoreSpeedCap();
