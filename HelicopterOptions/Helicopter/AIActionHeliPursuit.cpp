@@ -63,11 +63,14 @@ namespace {
     static_assert(offsetof(AIActionHeliPursuit, mIAIHelicopter) == 0x58, "AIActionHeliPursuit::mIAIHelicopter");
     static_assert(offsetof(AIActionHeliPursuit, mPursuitTime) == 0x60, "AIActionHeliPursuit::mPursuitTime");
     static_assert(offsetof(AIActionHeliPursuit, mSkidKnockTimer) == 0x64, "AIActionHeliPursuit::mSkidKnockTimer");
+    static_assert(offsetof(AIActionHeliPursuit, mPathTime) == 0x68, "AIActionHeliPursuit::mPathTime");
+    static_assert(offsetof(AIActionHeliPursuit, mBuildingPath) == 0x6C, "AIActionHeliPursuit::mBuildingPath");
     static_assert(offsetof(AIActionHeliPursuit, mSearchPatternAngle) == 0x70, "AIActionHeliPursuit::mSearchPatternAngle");
     static_assert(offsetof(AIActionHeliPursuit, mSearchDestPoint) == 0x74, "AIActionHeliPursuit::mSearchDestPoint");
     static_assert(offsetof(AIActionHeliPursuit, mPlayerRigidBody) == 0x80, "AIActionHeliPursuit::mPlayerRigidBody");
     static_assert(offsetof(AIActionHeliPursuit, mPlayerPosition) == 0x84, "AIActionHeliPursuit::mPlayerPosition");
     static_assert(offsetof(AIActionHeliPursuit, mSkidHitOffset) == 0x90, "AIActionHeliPursuit::mSkidHitOffset");
+    static_assert(offsetof(AIActionHeliPursuit, mCollisionAbort) == 0x9C, "AIActionHeliPursuit::mCollisionAbort");
     static_assert(offsetof(AIActionHeliPursuit, mPlayerSpeed) == 0xA0, "AIActionHeliPursuit::mPlayerSpeed");
     static_assert(offsetof(AIActionHeliPursuit, mPursuitMode) == 0xA4, "AIActionHeliPursuit::mPursuitMode");
     static_assert(offsetof(SoundAI, mDispatch) == 0xD8, "SoundAI::mDispatch");
@@ -84,6 +87,21 @@ namespace {
     float                gEscapeHeadingX = 0.0f;
     float                gEscapeHeadingZ = 0.0f;
     uint32_t             gRandomState = 0x2545F491u;
+
+#if defined(_DEBUG)
+    const AIActionHeliPursuit* gLoggedAction = nullptr;
+    int                        gLoggedMode = -1;
+
+    const char* PursuitModeName(int mode) {
+        switch (mode) {
+        case AIActionHeliPursuit::kStraight_Line: return "kStraight_Line";
+        case AIActionHeliPursuit::kSearch_Pattern: return "kSearch_Pattern";
+        case AIActionHeliPursuit::kSkid_Hit_Approach: return "kSkid_Hit_Approach";
+        case AIActionHeliPursuit::kSkid_Hit_Strike: return "kSkid_Hit_Strike";
+        default: return "-";
+        }
+    }
+#endif
 
     float RandomUnit() {
         gRandomState ^= gRandomState << 13;
@@ -116,16 +134,16 @@ void EAXAirSupport::IntentToRam() {
 
 void AIActionHeliPursuit::Refresh() {
     if (sSettings.LeadBase > sSettings.LeadMax)
-        Log::Warn("[Helicopter:Leading] leadBase %g is above leadMax %g, so the helicopter always aims %g m ahead.", sSettings.LeadBase,
-                  sSettings.LeadMax, sSettings.LeadMax);
+        Log::Warn("[Helicopter:Leading] LeadBase=%g > LeadMax=%g  leadDist pinned at %g", sSettings.LeadBase, sSettings.LeadMax, sSettings.LeadMax);
     if (sSettings.CrushHover > 0.0f && sSettings.CrushHeight > sSettings.CrushHover) {
-        Log::Warn("[Helicopter:CrushAttack] crushHeight %g is above hoverHeight %g; lowered to match.", sSettings.CrushHeight,
-                  sSettings.CrushHover);
+        Log::Warn("[Helicopter:CrushAttack] CrushHeight=%g > HoverHeight=%g  -> %g", sSettings.CrushHeight, sSettings.CrushHover, sSettings.CrushHover);
         sSettings.CrushHeight = sSettings.CrushHover;
     }
 
     sLeadDistance.base = sSettings.LeadBase;
     sLeadDistance.max  = sSettings.LeadMax;
+    Log::Info("AIActionHeliPursuit  sLeadDistance@0x%p base=%g max=%g  CrushHover=%g CrushHeight=%g", &sLeadDistance, sLeadDistance.base,
+              sLeadDistance.max, sSettings.CrushHover, sSettings.CrushHeight);
 }
 
 void __cdecl AIActionHeliPursuit::ConstructorEntry(Detour::Registers* registers) {
@@ -134,11 +152,13 @@ void __cdecl AIActionHeliPursuit::ConstructorEntry(Detour::Registers* registers)
     for (const AIActionHeliPursuit* known : gConstructed)
         if (known == action) return;
     gConstructed[gNextConstructed] = action;
+    Log::Info("AIActionHeliPursuit::AIActionHeliPursuit  ecx=0x%08X gConstructed[%d]", registers->ecx, gNextConstructed);
     gNextConstructed = (gNextConstructed + 1) % kTrackedActions;
 }
 
 AIActionHeliPursuit* AIActionHeliPursuit::Find(const IRigidBody* heliRigidBody) {
     if (IsAlive(gCurrent, heliRigidBody)) return gCurrent;
+    AIActionHeliPursuit* const previous = gCurrent;
     gCurrent = nullptr;
     for (AIActionHeliPursuit* action : gConstructed) {
         if (IsAlive(action, heliRigidBody)) {
@@ -146,6 +166,8 @@ AIActionHeliPursuit* AIActionHeliPursuit::Find(const IRigidBody* heliRigidBody) 
             break;
         }
     }
+    if (gCurrent != previous)
+        Log::Info("AIActionHeliPursuit  current 0x%p -> 0x%p  vtbl=0x%08X mIRigidBody[+0x54]=0x%p", previous, gCurrent, kVTable, heliRigidBody);
     return gCurrent;
 }
 
@@ -171,6 +193,8 @@ void AIActionHeliPursuit::StartSearch() {
     gSearchRadius = kSearchFirstRadius - kSearchRadiusGrowth;
     gSearchLapTurned = 0.0f;
     gSearchDirection = RandomUnit() < 0.5f ? 1.0f : -1.0f;
+    Log::Info("AIActionHeliPursuit 0x%p  StartSearch  mPursuitTime[+0x60]=%.2f dir=%+.0f escape=(%.3f, %.3f) mSearchPatternAngle[+0x70]=%.3f", this,
+              mPursuitTime, gSearchDirection, gEscapeHeadingX, gEscapeHeadingZ, mSearchPatternAngle);
     SetNextSearchPoint();
 }
 
@@ -200,6 +224,10 @@ void AIActionHeliPursuit::SetNextSearchPoint() {
     mIAIHelicopter->RestrictPointToRoadNet(mSearchDestPoint);
     mIAIHelicopter->FilterHeliAltitude(mSearchDestPoint);
     mSearchDestPoint.y += kSearchHeightOverDest;
+    Log::Info("AIActionHeliPursuit 0x%p  SetNextSearchPoint  GetLastKnownLocation=(%.2f, %.2f, %.2f) radius=%.1f r=%.1f step=%+.3f lap=%.3f "
+              "mSearchPatternAngle[+0x70]=%.3f speed=%.1f mSearchDestPoint[+0x74]=(%.2f, %.2f, %.2f)",
+              this, lastKnown.x, lastKnown.y, lastKnown.z, gSearchRadius, radius, step * gSearchDirection, gSearchLapTurned, mSearchPatternAngle,
+              gSearchSpeed, mSearchDestPoint.x, mSearchDestPoint.y, mSearchDestPoint.z);
 }
 
 void AIActionHeliPursuit::SearchForPerp() {
@@ -248,10 +276,51 @@ void AIActionHeliPursuit::CrushPursuit() {
 }
 
 void AIActionHeliPursuit::StartCrush() {
+    const kPursuitMode mode = mPursuitMode;
+    const float        skidKnockTimer = mSkidKnockTimer;
     mPursuitMode = kSkid_Hit_Strike;
     if (mSkidKnockTimer < StrikeTime) mSkidKnockTimer = StrikeTime;
 
-    SoundAI* copspeech = SoundAI::Get();
-    if (copspeech != nullptr && copspeech->GetHeli() != nullptr) copspeech->GetHeli()->IntentToRam();
-    Log::Info("Crush attack: the helicopter is over your car and drops onto it.");
+    SoundAI*       copspeech = SoundAI::Get();
+    EAXAirSupport* heli = copspeech != nullptr ? copspeech->GetHeli() : nullptr;
+    if (heli != nullptr) heli->IntentToRam();
+    Log::Info("AIActionHeliPursuit 0x%p  StartCrush  mPursuitMode[+0xA4] %d -> %d mSkidKnockTimer[+0x64] %.2f -> %.2f  "
+              "SoundAI[0x%08X]=0x%p mHeli[+0xE0]=0x%p IntentToRam vtbl+0x%02X",
+              this, mode, mPursuitMode, skidKnockTimer, mSkidKnockTimer, kSingletonSoundAI, copspeech, heli, kEAXCopIntentToRam);
 }
+
+#if defined(_DEBUG)
+void AIActionHeliPursuit::LogLive(bool full) const {
+    if (this != gLoggedAction || mPursuitMode != gLoggedMode) {
+        Log::Info("AIActionHeliPursuit 0x%p  mPursuitMode[+0xA4] %d %s -> %d %s  mPursuitTime[+0x60]=%.2f mSkidKnockTimer[+0x64]=%.2f", this,
+                  gLoggedMode, PursuitModeName(gLoggedMode), mPursuitMode, PursuitModeName(mPursuitMode), mPursuitTime, mSkidKnockTimer);
+        gLoggedAction = this;
+        gLoggedMode = mPursuitMode;
+    }
+    if (!full) return;
+
+    Log::Info("AIActionHeliPursuit 0x%p  vtbl=0x%08X mPursuitMode[+0xA4]=%d %s mPursuitTime[+0x60]=%.2f mSkidKnockTimer[+0x64]=%.2f "
+              "mPathTime[+0x68]=%.2f mBuildingPath[+0x6C]=%d mCollisionAbort[+0x9C]=%d",
+              this, *reinterpret_cast<const uint32_t*>(this), mPursuitMode, PursuitModeName(mPursuitMode), mPursuitTime, mSkidKnockTimer, mPathTime,
+              mBuildingPath, mCollisionAbort);
+    Log::Info("  mIVehicleAI[+0x4C]=0x%p mIRigidBody[+0x54]=0x%p mIAIHelicopter[+0x58]=0x%p mPlayerRigidBody[+0x80]=0x%p", mIVehicleAI, mIRigidBody,
+              mIAIHelicopter, mPlayerRigidBody);
+    Log::Info("  mPlayerPosition[+0x84]=(%.2f, %.2f, %.2f) mPlayerSpeed[+0xA0]=%.2f mSkidHitOffset[+0x90]=(%.2f, %.2f, %.2f)", mPlayerPosition.x,
+              mPlayerPosition.y, mPlayerPosition.z, mPlayerSpeed, mSkidHitOffset.x, mSkidHitOffset.y, mSkidHitOffset.z);
+    Log::Info("  mSearchPatternAngle[+0x70]=%.3f mSearchDestPoint[+0x74]=(%.2f, %.2f, %.2f)  radius=%.1f speed=%.1f dir=%+.0f lap=%.3f "
+              "escape=(%.3f, %.3f)",
+              mSearchPatternAngle, mSearchDestPoint.x, mSearchDestPoint.y, mSearchDestPoint.z, gSearchRadius, gSearchSpeed, gSearchDirection,
+              gSearchLapTurned, gEscapeHeadingX, gEscapeHeadingZ);
+
+    IPursuit* ip = mIVehicleAI != nullptr ? mIVehicleAI->GetPursuit() : nullptr;
+    if (ip != nullptr) {
+        const UMath::Vector3& lastKnown = ip->GetLastKnownLocation();
+        Log::Info("  IPursuit=0x%p GetPursuitDuration=%.2f GetEvadeLevel=%.3f GetCoolDownTimeRemaining=%.2f/%.2f IsPerpInSight=%d "
+                  "GetNumHeliSpawns=%d GetLastKnownLocation=(%.2f, %.2f, %.2f)",
+                  ip, ip->GetPursuitDuration(), ip->GetEvadeLevel(), ip->GetCoolDownTimeRemaining(), ip->GetCoolDownTimeRequired(), ip->IsPerpInSight(),
+                  ip->GetNumHeliSpawns(), lastKnown.x, lastKnown.y, lastKnown.z);
+    }
+    Log::Info("  sLeadDistance@0x%p base=%g max=%g  CrushHover=%g CrushHeight=%g", &sLeadDistance, sLeadDistance.base, sLeadDistance.max,
+              sSettings.CrushHover, sSettings.CrushHeight);
+}
+#endif

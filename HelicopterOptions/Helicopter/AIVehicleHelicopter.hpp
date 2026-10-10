@@ -2,6 +2,7 @@
 #include "../../dllmain.hpp"
 #include "HeliSheet.hpp"
 
+class AIActionHeliPursuit;
 class ISimpleChopper;
 class WRoadNav;
 
@@ -96,6 +97,12 @@ class AIVehicleHelicopter {
     void BeginHelicopter(const UMath::Vector3& position);
     void AvoidCamera(UMath::Vector3& dest);
     void AvoidCameraHook(UMath::Vector3& dest);
+
+#if defined(_DEBUG)
+    void LogLive(const IRigidBody* rigidBody, const AIActionHeliPursuit* pursuit) const;
+#else
+    void LogLive(const IRigidBody*, const AIActionHeliPursuit*) const {}
+#endif
 
     unsigned char       mBehavior[0x34];
     ISimable*           mIOwner;

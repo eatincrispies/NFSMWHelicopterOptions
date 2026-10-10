@@ -24,4 +24,10 @@ namespace HeliSheet {
     void BeginHelicopter();
     void Update(const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit);
 
+#if defined(_DEBUG)
+    void LogLive(bool full);
+#else
+    inline void LogLive(bool) {}
+#endif
+
 }

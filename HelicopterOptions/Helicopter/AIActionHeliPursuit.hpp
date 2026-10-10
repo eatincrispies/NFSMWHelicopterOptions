@@ -171,6 +171,12 @@ class AIActionHeliPursuit {
     void CrushPursuit();
     void StartCrush();
 
+#if defined(_DEBUG)
+    void LogLive(bool full) const;
+#else
+    void LogLive(bool) const {}
+#endif
+
     unsigned char  mAIAction[0x4C];
     IVehicleAI*    mIVehicleAI;
     IVehicle*      mIVehicle;

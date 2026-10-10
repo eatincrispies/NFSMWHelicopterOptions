@@ -174,6 +174,12 @@ class SimpleChopper {
     static void ApplySpeedCap(ISimpleChopper* ichopper);
     static void RestoreSpeedCap();
 
+#if defined(_DEBUG)
+    static void LogLive(ISimpleChopper* ichopper);
+#else
+    static void LogLive(ISimpleChopper*) {}
+#endif
+
     unsigned char             mVehicleBehavior[0x4C];
     unsigned char             mISimpleChopper[0x8];
     UMath::Vector3            mLastBodyOffset;
