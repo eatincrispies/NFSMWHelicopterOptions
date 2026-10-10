@@ -4,16 +4,11 @@
     <Filter Include="Helicopter" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="dllmain.hpp" />
     <ClInclude Include="src\Helicopter\AIActionHeliExit.hpp">
       <Filter>Helicopter</Filter>
     </ClInclude>
     <ClInclude Include="src\Helicopter\AIActionHeliPursuit.hpp">
-      <Filter>Helicopter</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Helicopter\AICopManager.hpp">
-      <Filter>Helicopter</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Helicopter\AIPerpVehicle.hpp">
       <Filter>Helicopter</Filter>
     </ClInclude>
     <ClInclude Include="src\Helicopter\AIVehicleHelicopter.hpp">
@@ -22,13 +17,7 @@
     <ClInclude Include="src\Helicopter\HeliSheet.hpp">
       <Filter>Helicopter</Filter>
     </ClInclude>
-    <ClInclude Include="src\Helicopter\Interfaces.hpp">
-      <Filter>Helicopter</Filter>
-    </ClInclude>
     <ClInclude Include="src\Helicopter\SimpleChopper.hpp">
-      <Filter>Helicopter</Filter>
-    </ClInclude>
-    <ClInclude Include="src\Helicopter\SoundAI.hpp">
       <Filter>Helicopter</Filter>
     </ClInclude>
   </ItemGroup>
@@ -40,25 +29,13 @@
     <ClCompile Include="src\Helicopter\AIActionHeliPursuit.cpp">
       <Filter>Helicopter</Filter>
     </ClCompile>
-    <ClCompile Include="src\Helicopter\AICopManager.cpp">
-      <Filter>Helicopter</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Helicopter\AIPerpVehicle.cpp">
-      <Filter>Helicopter</Filter>
-    </ClCompile>
     <ClCompile Include="src\Helicopter\AIVehicleHelicopter.cpp">
       <Filter>Helicopter</Filter>
     </ClCompile>
     <ClCompile Include="src\Helicopter\HeliSheet.cpp">
       <Filter>Helicopter</Filter>
     </ClCompile>
-    <ClCompile Include="src\Helicopter\Interfaces.cpp">
-      <Filter>Helicopter</Filter>
-    </ClCompile>
     <ClCompile Include="src\Helicopter\SimpleChopper.cpp">
-      <Filter>Helicopter</Filter>
-    </ClCompile>
-    <ClCompile Include="src\Helicopter\SoundAI.cpp">
       <Filter>Helicopter</Filter>
     </ClCompile>
   </ItemGroup>
