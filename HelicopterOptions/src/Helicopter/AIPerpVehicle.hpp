@@ -1,33 +1,17 @@
 #pragma once
 #include "Interfaces.hpp"
 
-struct Config {
-    float LeadBase                = 30.0f;
-    float LeadMax                 = 45.0f;
-
-    float CrushHover              = 0.0f;
-    float CrushHeight             = 0.0f;
-
-    float TurnClamp               = 1.3f;
-    float TurnResponseScale       = -8.0f;
-    float MaxChopperAccel         = 80.0f;
-    float MinChopperAccel         = 30.0f;
-    float StoppingRatio           = 1.55f;
-    float BrakeSpeedScale         = 0.4f;
-
-    float SpeedCap                = 100.0f;
-    float LineOfSight             = 0.0f;
-    float FuelTime                = 0.0f;
-    bool  HeliSheet               = true;
-    float IgnoreHeliSheetDistance = 0.0f;
-
-    float FlySpeed                = 100.0f;
-    float SpawnDistance           = 250.0f;
-};
-
-extern Config gCfg;
-
 namespace Ini {
+
+    struct Setting {
+        const char* section;
+        Log::Name   name;
+        float*      number;
+        bool*       toggle;
+        float       min;
+        float       max;
+        bool        hasDefault;
+    };
 
     void Load(void* module);
     bool ApplyHeat(int level, bool racing);
@@ -36,7 +20,14 @@ namespace Ini {
 
 class AIPerpVehicle {
   public:
-    static bool HookSetHeat();
+    static constexpr uintptr_t kSetHeat            = 0x00409060u;
+    static constexpr uint8_t   kSetHeatPrologue[7] = { 0x6A, 0xFF, 0x68, 0xBC, 0x79, 0x86, 0x00 };
+
+    static bool HookSetHeat() {
+        return Detour::Install("AIPerpVehicle::SetHeat", kSetHeat, kSetHeatPrologue, sizeof(kSetHeatPrologue), &SetHeatEntry);
+    }
+
+    static void __cdecl SetHeatEntry(Detour::Registers* registers);
     static void UpdateHeat();
 
     bool IsLocalPlayer() const;

@@ -4,25 +4,10 @@
 #include <cstdint>
 #include "AIActionHeliPursuit.hpp"
 #include "SoundAI.hpp"
-#include "AIPerpVehicle.hpp"
 
 namespace {
 
-    constexpr uintptr_t kVTable                       = 0x00891358u;
-    constexpr uintptr_t kConstructor                  = 0x00420EC0u;
-    constexpr uint8_t   kConstructorPrologue[7]       = { 0x6A, 0xFF, 0x68, 0xF8, 0x7D, 0x86, 0x00 };
-    constexpr uintptr_t kStraightLinePursuit          = 0x00412770u;
-    constexpr uintptr_t kSkidHitPursuit               = 0x00412B40u;
-    constexpr uintptr_t kSetNextPerpSearchDest        = 0x00412F30u;
-    constexpr uintptr_t kSearchForPerp                = 0x00413090u;
-
-    constexpr Patch::FloatOperand kStraightLineLeadBase     = { 0x00412946u, { 0xD8, 0x05 }, 0x00890614u };
-    constexpr Patch::FloatOperand kStraightLineLeadMaxTest  = { 0x0041294Cu, { 0xD8, 0x15 }, 0x00890658u };
-    constexpr Patch::FloatOperand kStraightLineLeadMaxClamp = { 0x0041295Bu, { 0xD9, 0x05 }, 0x00890658u };
-    constexpr Patch::CallSite     kUpdateStraightLinePursuit = { 0x004278C0u, kStraightLinePursuit };
-    constexpr Patch::CallSite     kUpdateSkidHitPursuit     = { 0x004278DBu, kSkidHitPursuit };
-    constexpr Patch::CallSite     kUpdateStartSearch        = { 0x00427881u, kSetNextPerpSearchDest };
-    constexpr Patch::CallSite     kUpdateSearchForPerp      = { 0x004278E6u, kSearchForPerp };
+    constexpr uintptr_t kVTable = 0x00891358u;
 
     constexpr float SkidHitLead  = 0.23f;
     constexpr float StrikeLead   = 0.092f;
@@ -62,12 +47,6 @@ namespace {
     static_assert(offsetof(AIActionHeliPursuit, mPlayerSpeed) == 0xA0, "AIActionHeliPursuit::mPlayerSpeed");
     static_assert(offsetof(AIActionHeliPursuit, mPursuitMode) == 0xA4, "AIActionHeliPursuit::mPursuitMode");
 
-    struct LeadDistance {
-        float base;
-        float max;
-    };
-
-    LeadDistance         gLeadDistance = {};
     AIActionHeliPursuit* gConstructed[kTrackedActions] = {};
     int                  gNextConstructed = 0;
     AIActionHeliPursuit* gCurrent = nullptr;
@@ -98,45 +77,29 @@ namespace {
             && Memory::Read(va + offsetof(AIActionHeliPursuit, mIRigidBody), &rigidBody, sizeof(rigidBody)) && rigidBody == heliRigidBody;
     }
 
-    void __cdecl ConstructorEntry(Detour::Registers* registers) {
-        auto* action = reinterpret_cast<AIActionHeliPursuit*>(static_cast<uintptr_t>(registers->ecx));
-        if (!action) return;
-        for (const AIActionHeliPursuit* known : gConstructed)
-            if (known == action) return;
-        gConstructed[gNextConstructed] = action;
-        gNextConstructed = (gNextConstructed + 1) % kTrackedActions;
-    }
-
-}
-
-void AIActionHeliPursuit::InstallPatches() {
-    Refresh();
-
-    Patch::Begin("AIActionHeliPursuit::StraightLinePursuit");
-    Patch::RedirectFloat("leadDist base", kStraightLineLeadBase, &gLeadDistance.base);
-    Patch::RedirectFloat("leadDist cap test", kStraightLineLeadMaxTest, &gLeadDistance.max);
-    Patch::RedirectFloat("leadDist cap", kStraightLineLeadMaxClamp, &gLeadDistance.max);
-    Patch::Commit();
-
-    Patch::Begin("AIActionHeliPursuit::Update");
-    Patch::RedirectCall("SkidHitPursuit", kUpdateSkidHitPursuit, Game::MethodAddress(&AIActionHeliPursuit::CrushPursuit));
-    Patch::Commit();
-
-    Patch::Begin("AIActionHeliPursuit::Update kSearch_Pattern");
-    Patch::RedirectCall("StraightLinePursuit", kUpdateStraightLinePursuit, Game::MethodAddress(&AIActionHeliPursuit::ChasePerp));
-    Patch::RedirectCall("SetNextPerpSearchDest", kUpdateStartSearch, Game::MethodAddress(&AIActionHeliPursuit::StartSearch));
-    Patch::RedirectCall("SearchForPerp", kUpdateSearchForPerp, Game::MethodAddress(&AIActionHeliPursuit::SearchForPerp));
-    Patch::Commit();
 }
 
 void AIActionHeliPursuit::Refresh() {
-    gLeadDistance.base = gCfg.LeadBase;
-    gLeadDistance.max  = gCfg.LeadMax;
+    if (sSettings.LeadBase > sSettings.LeadMax)
+        Log::Warn("[Helicopter:Leading] leadBase %g is above leadMax %g, so the helicopter always aims %g m ahead.", sSettings.LeadBase,
+                  sSettings.LeadMax, sSettings.LeadMax);
+    if (sSettings.CrushHover > 0.0f && sSettings.CrushHeight > sSettings.CrushHover) {
+        Log::Warn("[Helicopter:CrushAttack] crushHeight %g is above hoverHeight %g; lowered to match.", sSettings.CrushHeight,
+                  sSettings.CrushHover);
+        sSettings.CrushHeight = sSettings.CrushHover;
+    }
+
+    sLeadDistance.base = sSettings.LeadBase;
+    sLeadDistance.max  = sSettings.LeadMax;
 }
 
-bool AIActionHeliPursuit::HookConstructor() {
-    return Detour::Install("AIActionHeliPursuit::AIActionHeliPursuit", kConstructor, kConstructorPrologue, sizeof(kConstructorPrologue),
-                           &ConstructorEntry);
+void __cdecl AIActionHeliPursuit::ConstructorEntry(Detour::Registers* registers) {
+    auto* action = reinterpret_cast<AIActionHeliPursuit*>(static_cast<uintptr_t>(registers->ecx));
+    if (!action) return;
+    for (const AIActionHeliPursuit* known : gConstructed)
+        if (known == action) return;
+    gConstructed[gNextConstructed] = action;
+    gNextConstructed = (gNextConstructed + 1) % kTrackedActions;
 }
 
 AIActionHeliPursuit* AIActionHeliPursuit::Find(const IRigidBody* heliRigidBody) {
@@ -152,7 +115,7 @@ AIActionHeliPursuit* AIActionHeliPursuit::Find(const IRigidBody* heliRigidBody) 
 }
 
 bool AIActionHeliPursuit::IsCrushing() const {
-    return gCfg.CrushHover > 0.0f && IsSkidHitting();
+    return sSettings.CrushHover > 0.0f && IsSkidHitting();
 }
 
 void AIActionHeliPursuit::StraightLinePursuit() {
@@ -245,7 +208,7 @@ void AIActionHeliPursuit::CrushPursuit() {
     if (mPursuitMode == kSkid_Hit_Approach && overPerp && myPosition.y > mPlayerPosition.y) StartCrush();
 
     const bool crushing = mPursuitMode == kSkid_Hit_Strike && overPerp;
-    seekPosition.y = mPlayerPosition.y + (crushing ? gCfg.CrushHeight : gCfg.CrushHover);
+    seekPosition.y = mPlayerPosition.y + (crushing ? sSettings.CrushHeight : sSettings.CrushHover);
     mIVehicleAI->SetDriveTarget(seekPosition);
 }
 

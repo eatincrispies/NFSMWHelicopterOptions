@@ -8,14 +8,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include "AIPerpVehicle.hpp"
 #include "AIActionHeliExit.hpp"
 #include "AIActionHeliPursuit.hpp"
 #include "AICopManager.hpp"
 #include "AIVehicleHelicopter.hpp"
+#include "HeliSheet.hpp"
 #include "SimpleChopper.hpp"
-
-Config gCfg;
 
 namespace Ini {
 
@@ -24,39 +24,37 @@ namespace Ini {
         constexpr int kLevels    = 10;
         constexpr int kMostParts = 4;
 
-        const Config kGameValues{};
-
-        struct Setting {
-            const char*     section;
-            Log::Name       name;
-            float Config::* number;
-            bool  Config::* toggle;
-            float           min;
-            float           max;
-            bool            hasDefault;
+        struct SettingsTable {
+            const Setting* settings;
+            int            count;
         };
 
-        const Setting kSettings[] = {
-            { "Helicopter:Leading",                 "LeadBase",                &Config::LeadBase,                nullptr,            0.0f,   100.0f,  true },
-            { "Helicopter:Leading",                 "LeadMax",                 &Config::LeadMax,                 nullptr,            5.0f,   150.0f,  true },
-            { "Helicopter:CrushAttack",             "HoverHeight",             &Config::CrushHover,              nullptr,            0.0f,   10.0f,   false },
-            { "Helicopter:CrushAttack",             "CrushHeight",             &Config::CrushHeight,             nullptr,            0.0f,   6.0f,    false },
-            { "Helicopter:Turning",                 "TurnClamp",               &Config::TurnClamp,               nullptr,            0.4f,   5.0f,    true },
-            { "Helicopter:Turning",                 "TurnResponseScale",       &Config::TurnResponseScale,       nullptr,            -30.0f, -0.5f,   true },
-            { "Helicopter:Acceleration",            "MaxChopperAccel",         &Config::MaxChopperAccel,         nullptr,            40.0f,  250.0f,  true },
-            { "Helicopter:Acceleration",            "MinChopperAccel",         &Config::MinChopperAccel,         nullptr,            0.0f,   160.0f,  true },
-            { "Helicopter:Brake",                   "StoppingRatio",           &Config::StoppingRatio,           nullptr,            0.3f,   10.0f,   true },
-            { "Helicopter:Brake",                   "BrakeSpeedScale",         &Config::BrakeSpeedScale,         nullptr,            0.0f,   1.0f,    true },
-            { "Helicopter:SpeedCap",                "SpeedCap",                &Config::SpeedCap,                nullptr,            30.0f,  500.0f,  true },
-            { "Helicopter:LineOfSight",             "LineOfSight",             &Config::LineOfSight,             nullptr,            0.0f,   5000.0f, false },
-            { "Helicopter:FuelTime",                "FuelTime",                &Config::FuelTime,                nullptr,            0.0f,   3600.0f, false },
-            { "Helicopter:HeliSheet",               "HeliSheet",               nullptr,                          &Config::HeliSheet, 0.0f,   1.0f,    false },
-            { "Helicopter:IgnoreHeliSheetDistance", "IgnoreHeliSheetDistance", &Config::IgnoreHeliSheetDistance, nullptr,            0.0f,   2000.0f, false },
-            { "Helicopter:FlySpeed",                "FlySpeed",                &Config::FlySpeed,                nullptr,            40.0f,  220.0f,  true },
-            { "Helicopter:SpawnDistance",           "SpawnDistance",           &Config::SpawnDistance,           nullptr,            30.0f,  600.0f,  true },
+        template <size_t Count>
+        constexpr SettingsTable Table(const Setting (&settings)[Count]) {
+            return { settings, static_cast<int>(Count) };
+        }
+
+        const SettingsTable kTables[] = {
+            Table(AIActionHeliPursuit::kIniSettings),
+            Table(SimpleChopper::kIniSettings),
+            Table(AIVehicleHelicopter::kIniSettings),
+            Table(HeliSheet::kIniSettings),
+            Table(AIActionHeliExit::kIniSettings),
+            Table(AICopManager::kIniSettings),
         };
 
-        constexpr int kCount = static_cast<int>(sizeof(kSettings) / sizeof(kSettings[0]));
+        constexpr int kCount = static_cast<int>(std::size(AIActionHeliPursuit::kIniSettings) + std::size(SimpleChopper::kIniSettings)
+                                                + std::size(AIVehicleHelicopter::kIniSettings) + std::size(HeliSheet::kIniSettings)
+                                                + std::size(AIActionHeliExit::kIniSettings) + std::size(AICopManager::kIniSettings));
+
+        const Setting* gSettings[kCount] = {};
+
+        void GatherSettings() {
+            int index = 0;
+            for (const SettingsTable& table : kTables)
+                for (int i = 0; i < table.count; ++i)
+                    gSettings[index++] = &table.settings[i];
+        }
 
         struct Values {
             float    vanilla;
@@ -73,17 +71,17 @@ namespace Ini {
         bool   gRacing = false;
 
         float Get(int index) {
-            const Setting& setting = kSettings[index];
-            if (setting.toggle) return gCfg.*setting.toggle ? 1.0f : 0.0f;
-            return gCfg.*setting.number;
+            const Setting& setting = *gSettings[index];
+            if (setting.toggle) return *setting.toggle ? 1.0f : 0.0f;
+            return *setting.number;
         }
 
         void Set(int index, float value) {
-            const Setting& setting = kSettings[index];
+            const Setting& setting = *gSettings[index];
             if (setting.toggle)
-                gCfg.*setting.toggle = value != 0.0f;
+                *setting.toggle = value != 0.0f;
             else
-                gCfg.*setting.number = value;
+                *setting.number = value;
         }
 
         void Trim(char* text) {
@@ -97,13 +95,13 @@ namespace Ini {
 
         int FindSection(const char* section) {
             for (int i = 0; i < kCount; ++i)
-                if (_stricmp(kSettings[i].section, section) == 0) return i;
+                if (_stricmp(gSettings[i]->section, section) == 0) return i;
             return -1;
         }
 
         int PartCount(int first) {
             int count = 1;
-            while (first + count < kCount && std::strcmp(kSettings[first + count].section, kSettings[first].section) == 0) ++count;
+            while (first + count < kCount && std::strcmp(gSettings[first + count]->section, gSettings[first]->section) == 0) ++count;
             return count;
         }
 
@@ -239,7 +237,7 @@ namespace Ini {
                 ++*problems;
                 return;
             }
-            if (level == 0 && !kSettings[*first].hasDefault) {
+            if (level == 0 && !gSettings[*first]->hasDefault) {
                 Log::Warn("General.ini line %d: [%s] can't have a default value; set heat01-heat10 instead.", lineNumber, section);
                 ++*problems;
                 return;
@@ -255,7 +253,7 @@ namespace Ini {
 
             float values[kMostParts] = {};
             for (int part = 0; part < parts; ++part)
-                if (!ParseValue(kSettings[*first + part], section, key, partText[part], lineNumber, &values[part], problems)) return;
+                if (!ParseValue(*gSettings[*first + part], section, key, partText[part], lineNumber, &values[part], problems)) return;
 
             bool stored = true;
             for (int part = 0; part < parts; ++part)
@@ -303,32 +301,10 @@ namespace Ini {
             return true;
         }
 
-        void Sanitize() {
-            if (gCfg.MinChopperAccel > gCfg.MaxChopperAccel) {
-                Log::Warn("[Helicopter:Acceleration] minChopperAccel %g is above maxChopperAccel %g; lowered to match.", gCfg.MinChopperAccel,
-                          gCfg.MaxChopperAccel);
-                gCfg.MinChopperAccel = gCfg.MaxChopperAccel;
-            }
-
-            if (gCfg.LeadBase > gCfg.LeadMax)
-                Log::Warn("[Helicopter:Leading] leadBase %g is above leadMax %g, so the helicopter always aims %g m ahead.", gCfg.LeadBase,
-                          gCfg.LeadMax, gCfg.LeadMax);
-
-            if (gCfg.CrushHover > 0.0f && gCfg.CrushHeight > gCfg.CrushHover) {
-                Log::Warn("[Helicopter:CrushAttack] crushHeight %g is above hoverHeight %g; lowered to match.", gCfg.CrushHeight, gCfg.CrushHover);
-                gCfg.CrushHeight = gCfg.CrushHover;
-            }
-
-            const float authority = std::fabs(gCfg.TurnResponseScale / kGameValues.TurnResponseScale) * (gCfg.TurnClamp / kGameValues.TurnClamp);
-            if (authority >= 1.75f)
-                Log::Warn("Turning authority is %.0f%% of the game's ([Helicopter:Turning] TurnClamp %g x TurnResponseScale %g). "
-                          "Past about 175%% the helicopter rolls far over and can flip.",
-                          authority * 100.0f, gCfg.TurnClamp, gCfg.TurnResponseScale);
-        }
-
     }
 
     void Load(void* module) {
+        GatherSettings();
         for (int i = 0; i < kCount; ++i)
             gValues[i].vanilla = Get(i);
 
@@ -347,7 +323,6 @@ namespace Ini {
 
         for (int i = 0; i < kCount; ++i)
             Set(i, Resolve(gValues[i], 0, false));
-        Sanitize();
     }
 
     bool ApplyHeat(int level, bool racing) {
@@ -371,9 +346,8 @@ namespace Ini {
 
         Log::Info("Heat %d (%s): %d setting(s) changed.", level, racing ? "race" : "free roam", count);
         for (int n = 0; n < count; ++n)
-            Log::Info("  [%s] %s %g -> %g", kSettings[changed[n]].section, kSettings[changed[n]].name, previous[n], Get(changed[n]));
+            Log::Info("  [%s] %s %g -> %g", gSettings[changed[n]]->section, gSettings[changed[n]]->name, previous[n], Get(changed[n]));
 
-        if (count) Sanitize();
         return count > 0;
     }
 
@@ -381,9 +355,7 @@ namespace Ini {
 
 namespace {
 
-    constexpr uintptr_t kSetHeat            = 0x00409060u;
-    constexpr uint8_t   kSetHeatPrologue[7] = { 0x6A, 0xFF, 0x68, 0xBC, 0x79, 0x86, 0x00 };
-    constexpr uint32_t  kSetHeatArgument    = 0x08u;
+    constexpr uint32_t kSetHeatArgument = 0x08u;
 
     static_assert(offsetof(AIPerpVehicle, mIOwner) == 0x34, "Behavior::mIOwner");
     static_assert(offsetof(AIPerpVehicle, mIPerpetrator) == 0x758, "AIPerpVehicle's IPerpetrator");
@@ -416,25 +388,21 @@ namespace {
         AICopManager::Refresh();
     }
 
-    void __cdecl SetHeatEntry(Detour::Registers* registers) {
-        AIPerpVehicle* perp = FromIPerpetrator(registers->ecx);
-        if (!perp || !perp->IsLocalPlayer()) return;
-
-        if (perp != gPlayerPerp) {
-            gPlayerPerp = perp;
-            Log::Info("Heat now follows your car (AIPerpVehicle %p).", static_cast<void*>(perp));
-        }
-        gPlayerPerpVTable = IPerpetratorVTable(perp);
-
-        float heat = 0.0f;
-        if (!Memory::Read(registers->esp + kSetHeatArgument, &heat, sizeof(heat)) || !IsHeatLevel(heat)) return;
-        ApplyHeat(static_cast<int>(heat), perp->mWasInRaceEventLastHeatUpdate);
-    }
-
 }
 
-bool AIPerpVehicle::HookSetHeat() {
-    return Detour::Install("AIPerpVehicle::SetHeat", kSetHeat, kSetHeatPrologue, sizeof(kSetHeatPrologue), &SetHeatEntry);
+void __cdecl AIPerpVehicle::SetHeatEntry(Detour::Registers* registers) {
+    AIPerpVehicle* perp = FromIPerpetrator(registers->ecx);
+    if (!perp || !perp->IsLocalPlayer()) return;
+
+    if (perp != gPlayerPerp) {
+        gPlayerPerp = perp;
+        Log::Info("Heat now follows your car (AIPerpVehicle %p).", static_cast<void*>(perp));
+    }
+    gPlayerPerpVTable = IPerpetratorVTable(perp);
+
+    float heat = 0.0f;
+    if (!Memory::Read(registers->esp + kSetHeatArgument, &heat, sizeof(heat)) || !IsHeatLevel(heat)) return;
+    ApplyHeat(static_cast<int>(heat), perp->mWasInRaceEventLastHeatUpdate);
 }
 
 void AIPerpVehicle::UpdateHeat() {

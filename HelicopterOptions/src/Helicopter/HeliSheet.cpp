@@ -3,7 +3,6 @@
 #include <cstdint>
 #include "HeliSheet.hpp"
 #include "AIActionHeliPursuit.hpp"
-#include "AIPerpVehicle.hpp"
 
 namespace {
 
@@ -28,12 +27,12 @@ namespace {
     }
 
     bool IsOutOfRange(const UMath::Vector3& heliPosition) {
-        IRigidBody* playerRigidBody = gCfg.IgnoreHeliSheetDistance > 0.0f ? GetLocalPlayerRigidBody() : nullptr;
+        IRigidBody* playerRigidBody = HeliSheet::sSettings.IgnoreHeliSheetDistance > 0.0f ? GetLocalPlayerRigidBody() : nullptr;
         if (playerRigidBody == nullptr) return false;
 
         const float distance = UMath::Distancexz(heliPosition, playerRigidBody->GetPosition());
-        const float returnDistance = gCfg.IgnoreHeliSheetDistance * kReturnFraction;
-        const bool outOfRange = distance > (gFarFromTarget ? returnDistance : gCfg.IgnoreHeliSheetDistance);
+        const float returnDistance = HeliSheet::sSettings.IgnoreHeliSheetDistance * kReturnFraction;
+        const bool outOfRange = distance > (gFarFromTarget ? returnDistance : HeliSheet::sSettings.IgnoreHeliSheetDistance);
 
         const unsigned long now = GetTickCount();
         if (outOfRange != gFarFromTarget && now - gLastRangeLogMs >= 10000) {
@@ -71,7 +70,7 @@ void HeliSheet::BeginHelicopter() {
 void HeliSheet::Update(const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit) {
     gFarFromTarget = IsOutOfRange(heliPosition);
 
-    const bool ignore = !gCfg.HeliSheet || gFarFromTarget;
+    const bool ignore = !HeliSheet::sSettings.HeliSheet || gFarFromTarget;
     if (ignore || gIgnoring) {
         bIgnoreHeliSheet() = ignore || GameIgnoresDuringSkidHit(pursuit);
         gIgnoring = ignore;

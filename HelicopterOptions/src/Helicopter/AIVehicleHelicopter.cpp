@@ -6,22 +6,12 @@
 #include <cstdint>
 #include "AIVehicleHelicopter.hpp"
 #include "AIActionHeliPursuit.hpp"
-#include "AIPerpVehicle.hpp"
 #include "HeliSheet.hpp"
 #include "SimpleChopper.hpp"
 
 namespace {
 
-    constexpr uintptr_t kgHeliVehicle                          = 0x0090D61Cu;
-    constexpr uintptr_t kOnDriving                             = 0x00417A20u;
-    constexpr uint8_t   kOnDrivingPrologue[5]                  = { 0x83, 0xEC, 0x68, 0x53, 0x55 };
-    constexpr uintptr_t kCanSeeTargetHeliLOSDistance           = 0x00417146u;
-    constexpr uint8_t   kCanSeeTargetHeliLOSDistancePrologue[8] = { 0x89, 0x54, 0x24, 0x24, 0xD9, 0x44, 0x24, 0x24 };
-    constexpr uintptr_t kAvoidCamera                           = 0x00417790u;
-
-    constexpr Patch::CallSite     kOnDrivingAvoidCamera     = { 0x00417B02u, kAvoidCamera };
-    constexpr Patch::FloatOperand kOnDrivingStoppingRatio   = { 0x00417C88u, { 0xD8, 0x0D }, 0x008910FCu };
-    constexpr Patch::FloatOperand kOnDrivingBrakeSpeedScale = { 0x00417CA7u, { 0xD8, 0x0D }, 0x00891054u };
+    constexpr uintptr_t kgHeliVehicle = 0x0090D61Cu;
 
     static_assert(offsetof(AIVehicleHelicopter, mIOwner) == 0x34, "Behavior::mIOwner");
     static_assert(offsetof(AIVehicleHelicopter, mDriveSpeed) == 0x84, "AIVehicle::mDriveSpeed");
@@ -39,19 +29,13 @@ namespace {
 
     LARGE_INTEGER gFrequency = {};
     LARGE_INTEGER gLastTick = {};
+    bool          gClockReady = false;
     bool          gCounter = false;
     bool          gHaveLastTick = false;
     float         gSmoothed = 0.0f;
     unsigned      gFrames = 0;
     float         gElapsed = 0.0f;
     bool          gReported = false;
-
-    struct Brake {
-        float stoppingRatio;
-        float speedScale;
-    };
-
-    Brake         gBrake = {};
 
     unsigned long gLastRotateMs = 0;
     unsigned long gLastFuelWarningMs = 0;
@@ -64,12 +48,14 @@ namespace {
     }
 
     void InitClock() {
+        gClockReady = true;
         gCounter = QueryPerformanceFrequency(&gFrequency) != 0 && gFrequency.QuadPart > 0;
         if (!gCounter) Log::Warn("No high-resolution timer is available; the helicopter's motion is smoothed as if at 60 FPS.");
         ResetClock();
     }
 
     void AdvanceClock() {
+        if (!gClockReady) InitClock();
         float dt = kReferenceStep;
         LARGE_INTEGER now;
         if (gCounter && QueryPerformanceCounter(&now)) {
@@ -104,47 +90,27 @@ namespace {
         return Memory::IsFinite(v.x) && Memory::IsFinite(v.y) && Memory::IsFinite(v.z);
     }
 
-    void __cdecl OnDrivingEntry(Detour::Registers* registers) {
-        auto* heli = reinterpret_cast<AIVehicleHelicopter*>(static_cast<uintptr_t>(registers->ecx));
-        if (heli == nullptr || !HeliVehicleActive()) return;
-        AdvanceClock();
-        heli->UpdateHelicopterOptions();
-    }
-
-    void __cdecl CanSeeTargetEntry(Detour::Registers* registers) {
-        if (gCfg.LineOfSight <= 0.0f) return;
-        std::memcpy(&registers->edx, &gCfg.LineOfSight, sizeof(registers->edx));
-    }
-
 }
 
 bool HeliVehicleActive() {
     return Game::Global<AIVehicleHelicopter*>(kgHeliVehicle) != nullptr;
 }
 
-void AIVehicleHelicopter::InstallPatches() {
-    Refresh();
-
-    Patch::Begin("AIVehicleHelicopter::OnDriving");
-    Patch::RedirectCall("AvoidCamera", kOnDrivingAvoidCamera, Game::MethodAddress(&AIVehicleHelicopter::AvoidCameraHook));
-    Patch::RedirectFloat("stopping distance ratio", kOnDrivingStoppingRatio, &gBrake.stoppingRatio);
-    Patch::RedirectFloat("braking mDriveSpeed scale", kOnDrivingBrakeSpeedScale, &gBrake.speedScale);
-    Patch::Commit();
-}
-
 void AIVehicleHelicopter::Refresh() {
-    gBrake.stoppingRatio = gCfg.StoppingRatio;
-    gBrake.speedScale    = gCfg.BrakeSpeedScale;
+    sBrake.stoppingRatio = sSettings.StoppingRatio;
+    sBrake.speedScale    = sSettings.BrakeSpeedScale;
 }
 
-bool AIVehicleHelicopter::HookOnDriving() {
-    InitClock();
-    return Detour::Install("AIVehicleHelicopter::OnDriving", kOnDriving, kOnDrivingPrologue, sizeof(kOnDrivingPrologue), &OnDrivingEntry);
+void __cdecl AIVehicleHelicopter::OnDrivingEntry(Detour::Registers* registers) {
+    auto* heli = reinterpret_cast<AIVehicleHelicopter*>(static_cast<uintptr_t>(registers->ecx));
+    if (heli == nullptr || !HeliVehicleActive()) return;
+    AdvanceClock();
+    heli->UpdateHelicopterOptions();
 }
 
-bool AIVehicleHelicopter::HookCanSeeTarget() {
-    return Detour::Install("AIVehicleHelicopter::CanSeeTarget heliLOSdistance", kCanSeeTargetHeliLOSDistance, kCanSeeTargetHeliLOSDistancePrologue,
-                           sizeof(kCanSeeTargetHeliLOSDistancePrologue), &CanSeeTargetEntry);
+void __cdecl AIVehicleHelicopter::CanSeeTargetEntry(Detour::Registers* registers) {
+    if (sSettings.LineOfSight <= 0.0f) return;
+    std::memcpy(&registers->edx, &sSettings.LineOfSight, sizeof(registers->edx));
 }
 
 void AIVehicleHelicopter::UpdateHelicopterOptions() {
@@ -208,10 +174,10 @@ void AIVehicleHelicopter::BeginHelicopter(const UMath::Vector3& position) {
     }
 
     gLastFuel = mHeliFuelTimeRemaining;
-    if (gCfg.FuelTime > 0.0f) {
-        mHeliFuelTimeRemaining = gCfg.FuelTime;
-        gLastFuel = gCfg.FuelTime;
-        Log::Info("Fuel set to %.0f s by [Helicopter:FuelTime].", gCfg.FuelTime);
+    if (sSettings.FuelTime > 0.0f) {
+        mHeliFuelTimeRemaining = sSettings.FuelTime;
+        gLastFuel = sSettings.FuelTime;
+        Log::Info("Fuel set to %.0f s by [Helicopter:FuelTime].", sSettings.FuelTime);
     }
-    if (gCfg.LineOfSight > 0.0f) Log::Info("Line of sight set to %.0f m by [Helicopter:LineOfSight].", gCfg.LineOfSight);
+    if (sSettings.LineOfSight > 0.0f) Log::Info("Line of sight set to %.0f m by [Helicopter:LineOfSight].", sSettings.LineOfSight);
 }
