@@ -347,6 +347,7 @@ namespace Patch {
             kDataFloat,
             kFloatStore,
             kByteStore,
+            kVirtual,
         };
 
         struct Entry {
@@ -457,6 +458,9 @@ namespace Patch {
             case kDataFloat:
                 Log::Info("patch %s | %s  [0x%08X] float %g -> %g  %s -> %s", gGroup, entry.name, entry.writeVa, oldFloat, newFloat, from, to);
                 break;
+            case kVirtual:
+                Log::Info("patch %s | %s  vtable slot [0x%08X] 0x%08X -> 0x%08X", gGroup, entry.name, entry.writeVa, oldWord, newWord);
+                break;
             case kByteStore:
                 Log::Info("patch %s | %s  0x%08X %02X %02X mov imm8 %u -> %u  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa, entry.guard[0],
                           entry.guard[1], entry.guard[6], entry.bytes[3], entry.writeVa, from, to);
@@ -518,6 +522,20 @@ namespace Patch {
         entry.writeVa = site.va + 1;
         const uint32_t offset = CallOffset(site.va, reinterpret_cast<uintptr_t>(replacement));
         std::memcpy(entry.bytes, &offset, sizeof(offset));
+        gPending.push_back(entry);
+    }
+
+    void RedirectVirtual(Log::Name name, uintptr_t slot, uintptr_t function, const void* replacement) {
+        Entry entry = {};
+        entry.name = name;
+        entry.kind = kVirtual;
+        entry.guardVa = slot;
+        const uint32_t original = static_cast<uint32_t>(function);
+        std::memcpy(entry.guard, &original, sizeof(original));
+        entry.guardLength = sizeof(original);
+        entry.writeVa = slot;
+        const uint32_t hook = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(replacement));
+        std::memcpy(entry.bytes, &hook, sizeof(hook));
         gPending.push_back(entry);
     }
 
@@ -717,7 +735,7 @@ namespace Ini {
 
     namespace {
 
-        const char* const kFiles[] = { "General.ini", "Advanced.ini" };
+        const char* const kFiles[] = { "General", "Advanced" };
 
         constexpr int kLevels    = 10;
         constexpr int kMostParts = 4;
@@ -1039,10 +1057,12 @@ namespace Ini {
         if (char* slash = std::strrchr(directory, '\\')) slash[1] = '\0';
 
         for (const char* file : kFiles) {
-            char path[MAX_PATH];
-            std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\%s", directory, file);
-            if (!ReadFile(path))
-                Log::Warn("ini %s  fopen errno=%d, vanilla values", path, errno);
+            char inFolder[MAX_PATH];
+            char beside[MAX_PATH];
+            std::snprintf(inFolder, sizeof(inFolder), "%sHelicopterOptions\\Configuration\\%s\\%s.ini", directory, file, file);
+            std::snprintf(beside, sizeof(beside), "%sHelicopterOptions\\Configuration\\%s.ini", directory, file);
+            if (!ReadFile(inFolder) && !ReadFile(beside))
+                Log::Warn("ini %s  fopen errno=%d, vanilla values", beside, errno);
         }
 
         for (int i = 0; i < kCount; ++i)
@@ -1193,6 +1213,7 @@ namespace {
         AIVehicleHelicopter::HookOnDriving();
         AIVehicleHelicopter::HookCanSeeTarget();
         AIVehicleHelicopter::HookRespawnTimer();
+        AICopManager::HookApplyBreakerZones();
         if (GetModuleHandleA("NFSMWRevisedAirSupport.asi") == nullptr) EAXAirSupport::HookUpdate();
 
         if (Patch::SkippedGroups() + Patch::FailedGroups() == 0)

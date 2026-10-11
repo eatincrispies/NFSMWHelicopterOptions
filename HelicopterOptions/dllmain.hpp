@@ -121,6 +121,7 @@ namespace Patch {
     void RedirectFloat(Log::Name name, const FloatOperand& site, const float* value);
     void PushFloat(Log::Name name, const FloatPush& site, float value);
     void RedirectCall(Log::Name name, const CallSite& site, const void* replacement);
+    void RedirectVirtual(Log::Name name, uintptr_t slot, uintptr_t function, const void* replacement);
     void DataFloat(Log::Name name, uintptr_t va, float vanilla, float value);
     void StoreFloat(Log::Name name, const FloatStore& site, float value);
     void StoreByte(Log::Name name, const ByteStore& site, uint8_t value);
