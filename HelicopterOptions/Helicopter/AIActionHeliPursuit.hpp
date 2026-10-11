@@ -195,6 +195,7 @@ class AIActionHeliPursuit {
     void StartSearch();
     void SetNextSearchPoint();
     void SearchForPerp();
+    void HoverAndLook(const UMath::Vector3& myPosition);
     UMath::Vector3 SearchLookAt(const UMath::Vector3& myPosition) const;
 
 #if defined(_DEBUG)

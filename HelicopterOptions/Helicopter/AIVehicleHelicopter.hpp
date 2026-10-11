@@ -185,3 +185,20 @@ class EAXAirSupport {
     void Bailout();
     void HeliDestroyed();
 };
+
+class AICopManager {
+  public:
+    static constexpr uintptr_t kApplyBreakerZones            = 0x0042E930u;
+    static constexpr uint8_t   kApplyBreakerZonesPrologue[6] = { 0x83, 0xEC, 0x10, 0x57, 0x8B, 0xF9 };
+
+    static bool HookApplyBreakerZones() {
+        return Detour::Install("AICopManager::ApplyBreakerZones", kApplyBreakerZones, kApplyBreakerZonesPrologue, sizeof(kApplyBreakerZonesPrologue),
+                               &ApplyBreakerZonesEntry);
+    }
+
+    static void __cdecl ApplyBreakerZonesEntry(Detour::Registers* registers);
+
+    bool HasVehicle(uintptr_t vehicle) const;
+    uintptr_t FindVehicle(const ISimable* simable) const;
+    void UpdateBreakerFire();
+};
