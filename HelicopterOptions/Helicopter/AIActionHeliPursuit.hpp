@@ -90,33 +90,47 @@ class AIActionHeliPursuit {
     };
 
     struct Settings {
-        float LeadBase    = 30.0f;
-        float LeadMax     = 45.0f;
-        float CrushHover  = 0.0f;
-        float CrushHeight = 0.0f;
+        float LeadBase            = 30.0f;
+        float LeadMax             = 45.0f;
+        float AttackDuration      = 8.0f;
+        float ClosingSpeedNear    = 20.0f;
+        float ClosingSpeedMid     = 30.0f;
+        float ClosingSpeedFar     = 50.0f;
+        float SearchSpeedMin      = 15.0f;
+        float SearchSpeedMax      = 20.0f;
+        float SearchRadiusFirst   = 80.0f;
+        float SearchRadiusLargest = 250.0f;
     };
 
     static inline Settings sSettings;
 
     static inline const Ini::Setting kIniSettings[] = {
-        { "Helicopter:Leading",     "LeadBase",    &sSettings.LeadBase,    nullptr, 0.0f, 100.0f, true },
-        { "Helicopter:Leading",     "LeadMax",     &sSettings.LeadMax,     nullptr, 5.0f, 150.0f, true },
-        { "Helicopter:CrushAttack", "HoverHeight", &sSettings.CrushHover,  nullptr, 0.0f, 10.0f,  false },
-        { "Helicopter:CrushAttack", "CrushHeight", &sSettings.CrushHeight, nullptr, 0.0f, 6.0f,   false },
+        { "Helicopter:Leading",        "LeadBase",            &sSettings.LeadBase,            nullptr, 0.0f,  100.0f,  true },
+        { "Helicopter:Leading",        "LeadMax",             &sSettings.LeadMax,             nullptr, 5.0f,  150.0f,  true },
+        { "Helicopter:AttackDuration", "AttackDuration",      &sSettings.AttackDuration,      nullptr, 2.0f,  30.0f,   true },
+        { "Helicopter:ClosingSpeed",   "ClosingSpeedNear",    &sSettings.ClosingSpeedNear,    nullptr, 0.0f,  200.0f,  true },
+        { "Helicopter:ClosingSpeed",   "ClosingSpeedMid",     &sSettings.ClosingSpeedMid,     nullptr, 0.0f,  200.0f,  true },
+        { "Helicopter:ClosingSpeed",   "ClosingSpeedFar",     &sSettings.ClosingSpeedFar,     nullptr, 0.0f,  200.0f,  true },
+        { "Helicopter:SearchSpeed",    "SearchSpeedMin",      &sSettings.SearchSpeedMin,      nullptr, 5.0f,  120.0f,  true },
+        { "Helicopter:SearchSpeed",    "SearchSpeedMax",      &sSettings.SearchSpeedMax,      nullptr, 5.0f,  120.0f,  true },
+        { "Helicopter:SearchRadius",   "SearchRadiusFirst",   &sSettings.SearchRadiusFirst,   nullptr, 20.0f, 1000.0f, true },
+        { "Helicopter:SearchRadius",   "SearchRadiusLargest", &sSettings.SearchRadiusLargest, nullptr, 20.0f, 2000.0f, true },
     };
 
     static constexpr uintptr_t kConstructor            = 0x00420EC0u;
     static constexpr uint8_t   kConstructorPrologue[7] = { 0x6A, 0xFF, 0x68, 0xF8, 0x7D, 0x86, 0x00 };
     static constexpr uintptr_t kStraightLinePursuit    = 0x00412770u;
-    static constexpr uintptr_t kSkidHitPursuit         = 0x00412B40u;
     static constexpr uintptr_t kSetNextPerpSearchDest  = 0x00412F30u;
     static constexpr uintptr_t kSearchForPerp          = 0x00413090u;
 
     static constexpr Patch::FloatOperand kStraightLineLeadBase      = { 0x00412946u, { 0xD8, 0x05 }, 0x00890614u };
     static constexpr Patch::FloatOperand kStraightLineLeadMaxTest   = { 0x0041294Cu, { 0xD8, 0x15 }, 0x00890658u };
     static constexpr Patch::FloatOperand kStraightLineLeadMaxClamp  = { 0x0041295Bu, { 0xD9, 0x05 }, 0x00890658u };
+    static constexpr Patch::FloatOperand kStraightLineClosingNear   = { 0x00412AA0u, { 0xD9, 0x05 }, 0x00890560u };
+    static constexpr Patch::FloatOperand kStraightLineClosingMid    = { 0x00412A6Eu, { 0xD9, 0x05 }, 0x00890614u };
+    static constexpr Patch::FloatOperand kStraightLineClosingFar    = { 0x00412A87u, { 0xD9, 0x05 }, 0x00890DD0u };
+    static constexpr Patch::FloatStore   kStraightLineSkidKnockTime = { 0x004128B2u, { 0xC7, 0x46, 0x64 }, 8.0f };
     static constexpr Patch::CallSite     kUpdateStraightLinePursuit = { 0x004278C0u, kStraightLinePursuit };
-    static constexpr Patch::CallSite     kUpdateSkidHitPursuit      = { 0x004278DBu, kSkidHitPursuit };
     static constexpr Patch::CallSite     kUpdateStartSearch         = { 0x00427881u, kSetNextPerpSearchDest };
     static constexpr Patch::CallSite     kUpdateSearchForPerp       = { 0x004278E6u, kSearchForPerp };
 
@@ -125,7 +139,16 @@ class AIActionHeliPursuit {
         float max;
     };
 
+    struct ClosingSpeed {
+        float nearSpeed;
+        float midSpeed;
+        float farSpeed;
+    };
+
     static inline LeadDistance sLeadDistance = {};
+    static inline ClosingSpeed sClosingSpeed = {};
+    static inline bool         sSkidKnockPatched = false;
+    static inline float        sSkidKnockTime    = 0.0f;
 
     static void InstallPatches() {
         Refresh();
@@ -136,9 +159,16 @@ class AIActionHeliPursuit {
         Patch::RedirectFloat("leadDist cap", kStraightLineLeadMaxClamp, &sLeadDistance.max);
         Patch::Commit();
 
-        Patch::Begin("AIActionHeliPursuit::Update");
-        Patch::RedirectCall("SkidHitPursuit", kUpdateSkidHitPursuit, Game::MethodAddress(&AIActionHeliPursuit::CrushPursuit));
+        Patch::Begin("AIActionHeliPursuit::StraightLinePursuit desiredClosingSpeed");
+        Patch::RedirectFloat("desiredClosingSpeed 20.0", kStraightLineClosingNear, &sClosingSpeed.nearSpeed);
+        Patch::RedirectFloat("desiredClosingSpeed 30.0", kStraightLineClosingMid, &sClosingSpeed.midSpeed);
+        Patch::RedirectFloat("desiredClosingSpeed 50.0", kStraightLineClosingFar, &sClosingSpeed.farSpeed);
         Patch::Commit();
+
+        Patch::Begin("AIActionHeliPursuit::StraightLinePursuit kSkidKnockTime");
+        Patch::StoreFloat("mSkidKnockTimer = kSkidKnockTime", kStraightLineSkidKnockTime, sSettings.AttackDuration);
+        sSkidKnockPatched = Patch::Commit();
+        sSkidKnockTime = sSettings.AttackDuration;
 
         Patch::Begin("AIActionHeliPursuit::Update kSearch_Pattern");
         Patch::RedirectCall("StraightLinePursuit", kUpdateStraightLinePursuit, Game::MethodAddress(&AIActionHeliPursuit::ChasePerp));
@@ -160,16 +190,12 @@ class AIActionHeliPursuit {
         return mPursuitMode == kSkid_Hit_Approach || mPursuitMode == kSkid_Hit_Strike;
     }
 
-    bool IsCrushing() const;
     void StraightLinePursuit();
     void ChasePerp();
     void StartSearch();
     void SetNextSearchPoint();
     void SearchForPerp();
     UMath::Vector3 SearchLookAt(const UMath::Vector3& myPosition) const;
-    void SkidHitPursuit();
-    void CrushPursuit();
-    void StartCrush();
 
 #if defined(_DEBUG)
     void LogLive(bool full) const;

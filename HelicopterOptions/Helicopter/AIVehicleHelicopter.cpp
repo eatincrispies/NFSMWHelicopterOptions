@@ -15,6 +15,15 @@ namespace {
 
     constexpr uintptr_t kgHeliVehicle = 0x0090D61Cu;
 
+    constexpr uintptr_t kManager_ClearPlayback      = 0x0070E570u;
+    constexpr uintptr_t kEventHistory_Find          = 0x004CB3F0u;
+    constexpr uintptr_t kManager_mGlobalHistory     = 0x00992718u;
+    constexpr uintptr_t kEAXAirSupport_Bailout      = 0x00717C00u;
+    constexpr unsigned  kIsDeadSlot                 = 0x6Cu;
+    constexpr int       kSPCH1_EventID_HeliBailout  = 176;
+
+    bool gHeliWasDead = false;
+
     static_assert(offsetof(AIVehicleHelicopter, mIOwner) == 0x34, "Behavior::mIOwner");
     static_assert(offsetof(AIVehicleHelicopter, mDriveSpeed) == 0x84, "AIVehicle::mDriveSpeed");
     static_assert(offsetof(AIVehicleHelicopter, mDest) == 0x88, "AIVehicle::mDest");
@@ -115,6 +124,27 @@ namespace {
 
 }
 
+void EAXAirSupport::HeliDestroyed() {
+    Game::Call<void>(kManager_ClearPlayback);
+    if (uint16_t* history = Game::ThisCall<uint16_t*>(kEventHistory_Find, kManager_mGlobalHistory, kSPCH1_EventID_HeliBailout)) history[2] = 0;
+    Bailout();
+}
+
+bool EAXAirSupport::IsDead() {
+    return Game::ThisCall<bool>(Game::VirtualFunction(this, kIsDeadSlot), this);
+}
+
+void EAXAirSupport::Bailout() {
+    Game::ThisCall<void>(kEAXAirSupport_Bailout, this);
+}
+
+void __cdecl EAXAirSupport::UpdateEntry(Detour::Registers* registers) {
+    auto* heli = reinterpret_cast<EAXAirSupport*>(static_cast<uintptr_t>(registers->esi));
+    const bool dead = heli->IsDead();
+    if (dead && !gHeliWasDead) heli->HeliDestroyed();
+    gHeliWasDead = dead;
+}
+
 bool HeliVehicleActive() {
     return Game::Global<AIVehicleHelicopter*>(kgHeliVehicle) != nullptr;
 }
@@ -123,6 +153,23 @@ void AIVehicleHelicopter::Refresh() {
     sBrake.stoppingRatio = sSettings.StoppingRatio;
     sBrake.speedScale    = sSettings.BrakeSpeedScale;
     Log::Info("AIVehicleHelicopter  sBrake@0x%p stoppingRatio=%g speedScale=%g", &sBrake, sBrake.stoppingRatio, sBrake.speedScale);
+
+    sSightFacing = sSettings.FrontSightOnly ? kFrontFacing : kAnyFacing;
+    sDespawnDistance = sSettings.DespawnDistance;
+    if (sSightPatched && sSettings.AllAroundSight != sVisualSphere) {
+        Log::Info("kHeliVisualSphere[0x%08X] %g -> %g", kHeliVisualSphere, Game::Global<float>(kHeliVisualSphere), sSettings.AllAroundSight);
+        Game::Global<float>(kHeliVisualSphere) = sSettings.AllAroundSight;
+        sVisualSphere = sSettings.AllAroundSight;
+    }
+    Log::Info("AIVehicleHelicopter  sSightFacing@0x%p=%g kHeliVisualSphere=%g", &sSightFacing, sSightFacing, sVisualSphere);
+
+    if (sHidingPatched && sSettings.HidingSpots != sHidingSpots) {
+        if (Patch::RewriteStoredByte("AIVehicle hiding zone | mHiddenFromHelicopters = true", kHidingSpotHeliStore, sHidingSpots ? 1 : 0,
+                                     sSettings.HidingSpots ? 1 : 0))
+            sHidingSpots = sSettings.HidingSpots;
+        else
+            sHidingPatched = false;
+    }
 
     if (!sSpawnPatched || sSettings.SpawnDistance == sSpawnDistance) return;
     if (!Patch::RewritePushedFloat("AICopManager::SpawnPursuitHelicopter | testNav.IncNavPosition distance", kSpawnPursuitHelicopterIncNavPosition,
@@ -138,6 +185,13 @@ void __cdecl AIVehicleHelicopter::OnDrivingEntry(Detour::Registers* registers) {
     if (heli == nullptr || !HeliVehicleActive()) return;
     AdvanceClock();
     heli->UpdateHelicopterOptions();
+}
+
+void __cdecl AIVehicleHelicopter::RespawnTimerEntry(Detour::Registers* registers) {
+    if (sSettings.RespawnDelay <= 0.0f) return;
+    Log::Info("AIPursuit 0x%08X  mSpawnHeliTimer[+0xE0] = %g (TimeBetweenHeliActive %g)", registers->edi, sSettings.RespawnDelay,
+              *reinterpret_cast<const float*>(&registers->ecx));
+    std::memcpy(&registers->ecx, &sSettings.RespawnDelay, sizeof(registers->ecx));
 }
 
 void __cdecl AIVehicleHelicopter::CanSeeTargetEntry(Detour::Registers* registers) {
@@ -181,16 +235,6 @@ void AIVehicleHelicopter::UpdateHelicopterOptions() {
     SimpleChopper::ApplySpeedCap(mISimpleChopper);
     if (!newHelicopter) SimpleChopper::ScaleMotionFilters(SmoothedFrames());
     LogLive(rigidBody, pursuit);
-}
-
-void AIVehicleHelicopter::AvoidCamera(UMath::Vector3& dest) {
-    Game::ThisCall<void>(kAvoidCamera, this, &dest);
-}
-
-void AIVehicleHelicopter::AvoidCameraHook(UMath::Vector3& dest) {
-    const AIActionHeliPursuit* pursuit = AIActionHeliPursuit::Find(GetRigidBody());
-    if (pursuit != nullptr && pursuit->IsCrushing()) return;
-    AvoidCamera(dest);
 }
 
 void AIVehicleHelicopter::BeginHelicopter(const UMath::Vector3& position) {
