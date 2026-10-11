@@ -345,13 +345,15 @@ namespace Patch {
             kFloatPush,
             kCall,
             kDataFloat,
+            kFloatStore,
+            kByteStore,
         };
 
         struct Entry {
             Log::Name name;
             Kind      kind;
             uintptr_t guardVa;
-            uint8_t   guard[6];
+            uint8_t   guard[8];
             size_t    guardLength;
             uintptr_t writeVa;
             uint8_t   bytes[4];
@@ -455,6 +457,14 @@ namespace Patch {
             case kDataFloat:
                 Log::Info("patch %s | %s  [0x%08X] float %g -> %g  %s -> %s", gGroup, entry.name, entry.writeVa, oldFloat, newFloat, from, to);
                 break;
+            case kByteStore:
+                Log::Info("patch %s | %s  0x%08X %02X %02X mov imm8 %u -> %u  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa, entry.guard[0],
+                          entry.guard[1], entry.guard[6], entry.bytes[3], entry.writeVa, from, to);
+                break;
+            case kFloatStore:
+                Log::Info("patch %s | %s  0x%08X %02X %02X %02X mov imm32 %g -> %g  @0x%08X %s -> %s", gGroup, entry.name, entry.guardVa,
+                          entry.guard[0], entry.guard[1], entry.guard[2], oldFloat, newFloat, entry.writeVa, from, to);
+                break;
             }
         }
 #else
@@ -522,6 +532,33 @@ namespace Patch {
         gPending.push_back(entry);
     }
 
+    void StoreFloat(Log::Name name, const FloatStore& site, float value) {
+        Entry entry = {};
+        entry.name = name;
+        entry.kind = kFloatStore;
+        entry.guardVa = site.va;
+        std::memcpy(entry.guard, site.opcode, sizeof(site.opcode));
+        std::memcpy(entry.guard + sizeof(site.opcode), &site.value, sizeof(site.value));
+        entry.guardLength = sizeof(site.opcode) + sizeof(site.value);
+        entry.writeVa = site.va + sizeof(site.opcode);
+        std::memcpy(entry.bytes, &value, sizeof(value));
+        gPending.push_back(entry);
+    }
+
+    void StoreByte(Log::Name name, const ByteStore& site, uint8_t value) {
+        Entry entry = {};
+        entry.name = name;
+        entry.kind = kByteStore;
+        entry.guardVa = site.va;
+        std::memcpy(entry.guard, site.code, sizeof(site.code));
+        entry.guard[sizeof(site.code)] = site.value;
+        entry.guardLength = sizeof(site.code) + 1;
+        entry.writeVa = site.va + sizeof(site.code) + 1 - sizeof(entry.bytes);
+        std::memcpy(entry.bytes, entry.guard + entry.guardLength - sizeof(entry.bytes), sizeof(entry.bytes));
+        entry.bytes[sizeof(entry.bytes) - 1] = value;
+        gPending.push_back(entry);
+    }
+
     bool Commit() {
         for (const Entry& entry : gPending) {
             if (!Check(entry)) {
@@ -575,6 +612,46 @@ namespace Patch {
             return false;
         }
         Log::Info("patch %s  0x%08X 68 push %g -> %g", name, site.va, from, to);
+        return true;
+    }
+
+    bool RewriteStoredFloat(Log::Name name, const FloatStore& site, float from, float to) {
+        uint8_t expected[sizeof(site.opcode) + sizeof(from)];
+        std::memcpy(expected, site.opcode, sizeof(site.opcode));
+        std::memcpy(expected + sizeof(site.opcode), &from, sizeof(from));
+        if (!Memory::CheckBytes(site.va, expected, sizeof(expected))) {
+            char actual[16];
+            char wanted[16];
+            Memory::DescribeBytes(site.va, sizeof(expected), actual, sizeof(actual));
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(expected), sizeof(expected), wanted, sizeof(wanted));
+            Log::Warn("patch %s  0x%08X read %s, expected %s  live rewrite off", name, site.va, actual, wanted);
+            return false;
+        }
+        if (!Memory::WriteCode(site.va + sizeof(site.opcode), &to, sizeof(to))) {
+            Log::Error("patch %s  @0x%08X write failed GetLastError=%lu", name, site.va + sizeof(site.opcode), GetLastError());
+            return false;
+        }
+        Log::Info("patch %s  0x%08X mov imm32 %g -> %g", name, site.va, from, to);
+        return true;
+    }
+
+    bool RewriteStoredByte(Log::Name name, const ByteStore& site, uint8_t from, uint8_t to) {
+        uint8_t expected[sizeof(site.code) + 1];
+        std::memcpy(expected, site.code, sizeof(site.code));
+        expected[sizeof(site.code)] = from;
+        if (!Memory::CheckBytes(site.va, expected, sizeof(expected))) {
+            char actual[16];
+            char wanted[16];
+            Memory::DescribeBytes(site.va, sizeof(expected), actual, sizeof(actual));
+            Memory::DescribeBytes(reinterpret_cast<uintptr_t>(expected), sizeof(expected), wanted, sizeof(wanted));
+            Log::Warn("patch %s  0x%08X read %s, expected %s  live rewrite off", name, site.va, actual, wanted);
+            return false;
+        }
+        if (!Memory::WriteCode(site.va + sizeof(site.code), &to, sizeof(to))) {
+            Log::Error("patch %s  @0x%08X write failed GetLastError=%lu", name, site.va + sizeof(site.code), GetLastError());
+            return false;
+        }
+        Log::Info("patch %s  0x%08X mov imm8 %u -> %u", name, site.va, from, to);
         return true;
     }
 
@@ -639,6 +716,8 @@ float UMath::Distancexz(const Vector3& a, const Vector3& b) {
 namespace Ini {
 
     namespace {
+
+        const char* const kFiles[] = { "General.ini", "Advanced.ini" };
 
         constexpr int kLevels    = 10;
         constexpr int kMostParts = 4;
@@ -959,10 +1038,12 @@ namespace Ini {
         }
         if (char* slash = std::strrchr(directory, '\\')) slash[1] = '\0';
 
-        char path[MAX_PATH];
-        std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\General.ini", directory);
-        if (!ReadFile(path))
-            Log::Warn("ini %s  fopen errno=%d, vanilla values", path, errno);
+        for (const char* file : kFiles) {
+            char path[MAX_PATH];
+            std::snprintf(path, sizeof(path), "%sHelicopterOptions\\Configuration\\%s", directory, file);
+            if (!ReadFile(path))
+                Log::Warn("ini %s  fopen errno=%d, vanilla values", path, errno);
+        }
 
         for (int i = 0; i < kCount; ++i)
             Set(i, Resolve(gValues[i], 0, false));
@@ -1111,6 +1192,8 @@ namespace {
         AIActionHeliPursuit::HookConstructor();
         AIVehicleHelicopter::HookOnDriving();
         AIVehicleHelicopter::HookCanSeeTarget();
+        AIVehicleHelicopter::HookRespawnTimer();
+        if (GetModuleHandleA("NFSMWRevisedAirSupport.asi") == nullptr) EAXAirSupport::HookUpdate();
 
         if (Patch::SkippedGroups() + Patch::FailedGroups() == 0)
             Log::Info("init  ready  skipped=0 failed=0");

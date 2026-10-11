@@ -49,6 +49,11 @@ namespace Game {
         return reinterpret_cast<Return (__thiscall*)(Args...)>(function)(args...);
     }
 
+    template <typename Return, typename... Args>
+    Return Call(uintptr_t function, Args... args) {
+        return reinterpret_cast<Return (__cdecl*)(Args...)>(function)(args...);
+    }
+
     template <typename Method>
     const void* MethodAddress(Method method) {
         static_assert(sizeof(method) == sizeof(void*), "only plain member functions have a single code address");
@@ -100,14 +105,30 @@ namespace Patch {
         uintptr_t target;
     };
 
+    struct FloatStore {
+        uintptr_t va;
+        uint8_t   opcode[3];
+        float     value;
+    };
+
+    struct ByteStore {
+        uintptr_t va;
+        uint8_t   code[6];
+        uint8_t   value;
+    };
+
     void Begin(Log::Name group);
     void RedirectFloat(Log::Name name, const FloatOperand& site, const float* value);
     void PushFloat(Log::Name name, const FloatPush& site, float value);
     void RedirectCall(Log::Name name, const CallSite& site, const void* replacement);
     void DataFloat(Log::Name name, uintptr_t va, float vanilla, float value);
+    void StoreFloat(Log::Name name, const FloatStore& site, float value);
+    void StoreByte(Log::Name name, const ByteStore& site, uint8_t value);
     bool Commit();
 
     bool RewritePushedFloat(Log::Name name, const FloatPush& site, float from, float to);
+    bool RewriteStoredFloat(Log::Name name, const FloatStore& site, float from, float to);
+    bool RewriteStoredByte(Log::Name name, const ByteStore& site, uint8_t from, uint8_t to);
 
     int  SkippedGroups();
     int  FailedGroups();
