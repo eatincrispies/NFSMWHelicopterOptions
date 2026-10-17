@@ -24,6 +24,134 @@ namespace {
 
     bool gHeliWasDead = false;
 
+    constexpr uint32_t kCopHeliCollection = 0x47C914A3u;
+    constexpr uint16_t kBoundsPrimVsWorld   = 1u << 1;
+    constexpr uint16_t kBoundsPrimVsObjects = 1u << 2;
+    constexpr uint16_t kBoundsPrimVsGround  = 1u << 3;
+    constexpr uint16_t kBoundsBox           = 1u << 6;
+    constexpr float    kBoundsPrecision     = 1000.0f;
+    constexpr int16_t  kQuaternionOne       = 32767;
+
+    static_assert(offsetof(CollisionGeometry::Bounds, fFlags) == 0xE, "Bounds::fFlags");
+    static_assert(offsetof(CollisionGeometry::Bounds, fHalfDimensions) == 0x10, "Bounds::fHalfDimensions");
+    static_assert(offsetof(CollisionGeometry::Bounds, fNumChildren) == 0x16, "Bounds::fNumChildren");
+    static_assert(offsetof(CollisionGeometry::Bounds, fChildIndex) == 0x1E, "Bounds::fChildIndex");
+    static_assert(offsetof(CollisionGeometry::Bounds, fRadius) == 0x20, "Bounds::fRadius");
+    static_assert(offsetof(CollisionGeometry::Bounds, fCollection) == 0x2C, "Bounds::fCollection");
+    static_assert(sizeof(CollisionGeometry::Bounds) == 0x30, "Bounds");
+    static_assert(sizeof(CollisionGeometry::Collection) == 0x10, "Collection");
+
+    struct alignas(16) HeliCollision {
+        CollisionGeometry::Collection header;
+        CollisionGeometry::Bounds     bounds[3];
+    };
+
+    constexpr float kPlayerContactRange = 15.0f;
+    constexpr float kLengthwisePush     = 2.0f;
+    constexpr float kPushMargin         = 0.1f;
+
+#if defined(_DEBUG)
+    unsigned long gLastPushLogMs = 0;
+#endif
+
+    float Dot(const UMath::Vector3& a, const UMath::Vector3& b) {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    struct Push {
+        UMath::Vector3 direction;
+        float          depth;
+        const char*    box;
+    };
+
+    bool BoxPush(const UMath::Vector3& center, const UMath::Vector3* heliAxes, const UMath::Vector3& half, const UMath::Vector3& car,
+                 const UMath::Vector3* carAxes, const UMath::Vector3& carHalf, Push& push) {
+        const UMath::Vector3 apart = center - car;
+        const float          carExtent[3] = { carHalf.x, carHalf.y, carHalf.z };
+        const float          heliExtent[3] = { half.x, half.y, half.z };
+        const float          weight[3] = { 1.0f, 1.0f, kLengthwisePush };
+        for (int h = 0; h < 3; ++h) {
+            const float reach = std::fabs(Dot(carAxes[0], heliAxes[h])) * carHalf.x + std::fabs(Dot(carAxes[1], heliAxes[h])) * carHalf.y +
+                                std::fabs(Dot(carAxes[2], heliAxes[h])) * carHalf.z;
+            if (heliExtent[h] + reach - std::fabs(Dot(apart, heliAxes[h])) <= 0.0f) return false;
+        }
+        float best = 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            const float along = Dot(apart, carAxes[a]);
+            const float reach = std::fabs(Dot(heliAxes[0], carAxes[a])) * half.x + std::fabs(Dot(heliAxes[1], carAxes[a])) * half.y +
+                                std::fabs(Dot(heliAxes[2], carAxes[a])) * half.z;
+            const float overlap = carExtent[a] + reach - std::fabs(along);
+            if (overlap <= 0.0f) return false;
+            if (a == 0 || overlap * weight[a] < best) {
+                best = overlap * weight[a];
+                push.direction = carAxes[a] * (along < 0.0f ? -1.0f : 1.0f);
+                push.depth = overlap;
+            }
+        }
+        return true;
+    }
+
+    HeliCollision gHeliCollision = {};
+
+    int16_t CompressBounds(float value) {
+        return static_cast<int16_t>(std::lround(value * kBoundsPrecision));
+    }
+
+    CollisionGeometry::Bounds MakeBox(const CollisionGeometry::Bounds& root, const UMath::Vector3& offset, const UMath::Vector3& half, uint16_t flags) {
+        CollisionGeometry::Bounds box = {};
+        box.fOrientation[3] = kQuaternionOne;
+        box.fPosition[0] = CompressBounds(offset.x);
+        box.fPosition[1] = CompressBounds(offset.y);
+        box.fPosition[2] = CompressBounds(offset.z);
+        box.fFlags = flags;
+        box.fHalfDimensions[0] = CompressBounds(half.x);
+        box.fHalfDimensions[1] = CompressBounds(half.y);
+        box.fHalfDimensions[2] = CompressBounds(half.z);
+        box.fPCloudIndex = -1;
+        box.fChildIndex = -1;
+        box.fRadius = std::fmax(half.x, std::fmax(half.y, half.z));
+        box.fSurface = root.fSurface;
+        box.fCollection = &gHeliCollision.header;
+        return box;
+    }
+
+    const CollisionGeometry::Collection* HeliCollisionFrom(const CollisionGeometry::Collection* original) {
+        const auto* root = reinterpret_cast<const CollisionGeometry::Bounds*>(original + 1);
+        if (root->fNumChildren != 0) return original;
+
+        const AIVehicleHelicopter::Settings& settings = AIVehicleHelicopter::sSettings;
+        if (settings.CollisionWidth <= 0.0f || settings.CollisionHeight <= 0.0f || settings.CollisionLength <= 0.0f) {
+            CollisionGeometry::Collections::sCabinOffset = { 0.0f, 0.0f, 0.0f };
+            CollisionGeometry::Collections::sCabinHalf = { root->fHalfDimensions[0] / kBoundsPrecision, root->fHalfDimensions[1] / kBoundsPrecision,
+                                                           root->fHalfDimensions[2] / kBoundsPrecision };
+            CollisionGeometry::Collections::sTailBox = false;
+            Log::Info("CollisionGeometry  COPHELI 0x%p kept: the game's own box", original);
+            return original;
+        }
+        CollisionGeometry::Collections::sCabinOffset = CollisionGeometry::Collections::kHeliCabinOffset;
+        CollisionGeometry::Collections::sCabinHalf = { settings.CollisionWidth * 0.5f, settings.CollisionHeight * 0.5f, settings.CollisionLength * 0.5f };
+        CollisionGeometry::Collections::sTailBox = true;
+
+        gHeliCollision.header = *original;
+        gHeliCollision.header.fNumBounds = 3;
+        gHeliCollision.bounds[0] = *root;
+        gHeliCollision.bounds[0].fNumChildren = 2;
+        gHeliCollision.bounds[0].fChildIndex = 1;
+        gHeliCollision.bounds[0].fCollection = &gHeliCollision.header;
+        gHeliCollision.bounds[1] = MakeBox(*root, CollisionGeometry::Collections::sCabinOffset, CollisionGeometry::Collections::sCabinHalf,
+                                           kBoundsBox | kBoundsPrimVsWorld | kBoundsPrimVsObjects | kBoundsPrimVsGround);
+        gHeliCollision.bounds[2] = MakeBox(*root, CollisionGeometry::Collections::kHeliTailOffset, CollisionGeometry::Collections::kHeliTailHalf,
+                                           kBoundsBox | kBoundsPrimVsWorld | kBoundsPrimVsObjects);
+        Log::Info("CollisionGeometry  COPHELI 0x%p (1 box, half %.3f %.3f %.3f) -> 0x%p: cabin box half (%.2f %.2f %.2f) at (%.2f %.2f %.2f), tail box half (%.2f %.2f %.2f) at (%.2f %.2f %.2f)",
+                  original, root->fHalfDimensions[0] / kBoundsPrecision, root->fHalfDimensions[1] / kBoundsPrecision, root->fHalfDimensions[2] / kBoundsPrecision,
+                  &gHeliCollision.header, CollisionGeometry::Collections::sCabinHalf.x, CollisionGeometry::Collections::sCabinHalf.y,
+                  CollisionGeometry::Collections::sCabinHalf.z, CollisionGeometry::Collections::sCabinOffset.x, CollisionGeometry::Collections::sCabinOffset.y,
+                  CollisionGeometry::Collections::sCabinOffset.z, CollisionGeometry::Collections::kHeliTailHalf.x, CollisionGeometry::Collections::kHeliTailHalf.y,
+                  CollisionGeometry::Collections::kHeliTailHalf.z, CollisionGeometry::Collections::kHeliTailOffset.x, CollisionGeometry::Collections::kHeliTailOffset.y,
+                  CollisionGeometry::Collections::kHeliTailOffset.z);
+        return &gHeliCollision.header;
+    }
+
     constexpr uintptr_t kSim_GetTime                    = 0x006E8DE0u;
     constexpr uintptr_t kAttrib_StringToKey             = 0x00454640u;
     constexpr uintptr_t kVehicleRenderConnEffect_Update = 0x00744A50u;
@@ -250,6 +378,16 @@ void __cdecl EAXAirSupport::UpdateEntry(Detour::Registers* registers) {
     gHeliWasDead = dead;
 }
 
+const CollisionGeometry::Collection* CollisionGeometry::Collections::Find(uint32_t name) {
+    return Game::ThisCall<const Collection*>(kFind, this, name);
+}
+
+const CollisionGeometry::Collection* CollisionGeometry::Collections::VehicleFind(uint32_t name) {
+    const Collection* found = Find(name);
+    if (found == nullptr || name != kCopHeliCollection || found->fNameHash != kCopHeliCollection || found->fNumBounds != 1) return found;
+    return HeliCollisionFrom(found);
+}
+
 bool AICopManager::HasVehicle(uintptr_t vehicle) const {
     const uintptr_t manager = reinterpret_cast<uintptr_t>(this);
     uintptr_t vehicles = 0;
@@ -382,6 +520,12 @@ void __cdecl AIVehicleHelicopter::OnDrivingEntry(Detour::Registers* registers) {
     heli->UpdateHelicopterOptions();
 }
 
+void AIVehicleHelicopter::AvoidCameraHook(UMath::Vector3& dest) {
+    const AIActionHeliPursuit* pursuit = AIActionHeliPursuit::Find(GetRigidBody());
+    if (pursuit != nullptr && pursuit->IsStriking()) return;
+    Game::ThisCall<void>(kAvoidCamera, this, &dest);
+}
+
 void __cdecl AIVehicleHelicopter::RespawnTimerEntry(Detour::Registers* registers) {
     if (sSettings.RespawnDelay <= 0.0f) return;
     Log::Info("AIPursuit 0x%08X  mSpawnHeliTimer[+0xE0] = %g (TimeBetweenHeliActive %g)", registers->edi, sSettings.RespawnDelay,
@@ -426,10 +570,67 @@ void AIVehicleHelicopter::UpdateHelicopterOptions() {
         gLastFuel = mHeliFuelTimeRemaining;
 
     const AIActionHeliPursuit* pursuit = AIActionHeliPursuit::Find(rigidBody);
+    const bool striking = pursuit != nullptr && pursuit->IsStriking();
+    sBrake.stoppingRatio = striking ? kNoBrakeRatio : sSettings.StoppingRatio;
+    sBrake.speedScale    = striking ? 1.0f : sSettings.BrakeSpeedScale;
     HeliSheet::Update(position, pursuit);
+    StayOutOfPlayer(rigidBody);
     SimpleChopper::ApplySpeedCap(mISimpleChopper);
     if (!newHelicopter) SimpleChopper::ScaleMotionFilters(SmoothedFrames());
     LogLive(rigidBody, pursuit);
+}
+
+void AIVehicleHelicopter::StayOutOfPlayer(IRigidBody* rigidBody) {
+    if (!sSettings.KeepOut) return;
+    IRigidBody* player = GetLocalPlayerRigidBody();
+    if (player == nullptr) return;
+    const UMath::Vector3 heli = rigidBody->GetPosition();
+    const UMath::Vector3 car = player->GetPosition();
+    const UMath::Vector3 apart = heli - car;
+    if (Dot(apart, apart) > kPlayerContactRange * kPlayerContactRange) return;
+
+    UMath::Vector3 heliAxes[3] = {};
+    UMath::Vector3 carAxes[3] = {};
+    rigidBody->GetRightVector(heliAxes[0]);
+    rigidBody->GetUpVector(heliAxes[1]);
+    rigidBody->GetForwardVector(heliAxes[2]);
+    player->GetRightVector(carAxes[0]);
+    player->GetUpVector(carAxes[1]);
+    player->GetForwardVector(carAxes[2]);
+    UMath::Vector3 carHalf = {};
+    player->GetDimension(carHalf);
+
+    const UMath::Vector3& cabinOffset = CollisionGeometry::Collections::sCabinOffset;
+    const UMath::Vector3& tailOffset = CollisionGeometry::Collections::kHeliTailOffset;
+    const UMath::Vector3  cabin = heli + heliAxes[0] * cabinOffset.x + heliAxes[1] * cabinOffset.y + heliAxes[2] * cabinOffset.z;
+    const UMath::Vector3  tail = heli + heliAxes[0] * tailOffset.x + heliAxes[1] * tailOffset.y + heliAxes[2] * tailOffset.z;
+
+    Push push = {};
+    Push tailPush = {};
+    bool pushing = BoxPush(cabin, heliAxes, CollisionGeometry::Collections::sCabinHalf, car, carAxes, carHalf, push);
+    if (pushing) push.box = "cabin";
+    if (CollisionGeometry::Collections::sTailBox && BoxPush(tail, heliAxes, CollisionGeometry::Collections::kHeliTailHalf, car, carAxes, carHalf, tailPush) && (!pushing || tailPush.depth > push.depth)) {
+        push = tailPush;
+        push.box = "tail";
+        pushing = true;
+    }
+    if (!pushing) return;
+
+    rigidBody->SetPosition(heli + push.direction * (push.depth + kPushMargin));
+    AIActionHeliPursuit::TouchedPlayer();
+    const UMath::Vector3& heliVelocity = rigidBody->GetLinearVelocity();
+    const float           closing = -Dot(heliVelocity - player->GetLinearVelocity(), push.direction);
+    if (closing > 0.0f) rigidBody->SetLinearVelocity(heliVelocity + push.direction * closing);
+
+#if defined(_DEBUG)
+    const unsigned long now = GetTickCount();
+    if (now - gLastPushLogMs >= 250) {
+        gLastPushLogMs = now;
+        Log::Info("AIVehicleHelicopter 0x%p  %s box inside the player's car by %.2f m, pushed out along car (right %.2f up %.2f ahead %.2f), stopped %.1f m/s",
+                  this, push.box, push.depth, Dot(push.direction, carAxes[0]), Dot(push.direction, carAxes[1]), Dot(push.direction, carAxes[2]),
+                  closing > 0.0f ? closing : 0.0f);
+    }
+#endif
 }
 
 void AIVehicleHelicopter::BeginHelicopter(const UMath::Vector3& position) {

@@ -100,6 +100,9 @@ class AIActionHeliPursuit {
         float SearchSpeedMax      = 20.0f;
         float SearchRadiusFirst   = 80.0f;
         float SearchRadiusLargest = 250.0f;
+        float StrikeHeight        = 0.4f;
+        float LineUpDistance      = 6.0f;
+        float ShoveTime           = 0.35f;
     };
 
     static inline Settings sSettings;
@@ -115,6 +118,9 @@ class AIActionHeliPursuit {
         { "Helicopter:SearchSpeed",    "SearchSpeedMax",      &sSettings.SearchSpeedMax,      nullptr, 5.0f,  120.0f,  true },
         { "Helicopter:SearchRadius",   "SearchRadiusFirst",   &sSettings.SearchRadiusFirst,   nullptr, 20.0f, 1000.0f, true },
         { "Helicopter:SearchRadius",   "SearchRadiusLargest", &sSettings.SearchRadiusLargest, nullptr, 20.0f, 2000.0f, true },
+        { "Helicopter:StrikeHeight",   "StrikeHeight",        &sSettings.StrikeHeight,        nullptr, -2.0f, 5.0f,    true },
+        { "Helicopter:LineUpDistance", "LineUpDistance",      &sSettings.LineUpDistance,      nullptr, 2.0f,  20.0f,   true },
+        { "Helicopter:ShoveTime",      "ShoveTime",           &sSettings.ShoveTime,           nullptr, 0.0f,  5.0f,    true },
     };
 
     static constexpr uintptr_t kConstructor            = 0x00420EC0u;
@@ -122,6 +128,7 @@ class AIActionHeliPursuit {
     static constexpr uintptr_t kStraightLinePursuit    = 0x00412770u;
     static constexpr uintptr_t kSetNextPerpSearchDest  = 0x00412F30u;
     static constexpr uintptr_t kSearchForPerp          = 0x00413090u;
+    static constexpr uintptr_t kSkidHitPursuit         = 0x00412B40u;
 
     static constexpr Patch::FloatOperand kStraightLineLeadBase      = { 0x00412946u, { 0xD8, 0x05 }, 0x00890614u };
     static constexpr Patch::FloatOperand kStraightLineLeadMaxTest   = { 0x0041294Cu, { 0xD8, 0x15 }, 0x00890658u };
@@ -133,6 +140,7 @@ class AIActionHeliPursuit {
     static constexpr Patch::CallSite     kUpdateStraightLinePursuit = { 0x004278C0u, kStraightLinePursuit };
     static constexpr Patch::CallSite     kUpdateStartSearch         = { 0x00427881u, kSetNextPerpSearchDest };
     static constexpr Patch::CallSite     kUpdateSearchForPerp       = { 0x004278E6u, kSearchForPerp };
+    static constexpr Patch::CallSite     kUpdateSkidHitPursuit      = { 0x004278DBu, kSkidHitPursuit };
 
     struct LeadDistance {
         float base;
@@ -175,6 +183,10 @@ class AIActionHeliPursuit {
         Patch::RedirectCall("SetNextPerpSearchDest", kUpdateStartSearch, Game::MethodAddress(&AIActionHeliPursuit::StartSearch));
         Patch::RedirectCall("SearchForPerp", kUpdateSearchForPerp, Game::MethodAddress(&AIActionHeliPursuit::SearchForPerp));
         Patch::Commit();
+
+        Patch::Begin("AIActionHeliPursuit::Update kSkid_Hit");
+        Patch::RedirectCall("SkidHitPursuit", kUpdateSkidHitPursuit, Game::MethodAddress(&AIActionHeliPursuit::StrikePerp));
+        Patch::Commit();
     }
 
     static bool HookConstructor() {
@@ -185,13 +197,28 @@ class AIActionHeliPursuit {
     static void Refresh();
     static void __cdecl ConstructorEntry(Detour::Registers* registers);
     static AIActionHeliPursuit* Find(const IRigidBody* heliRigidBody);
+    static void TouchedPlayer();
 
     bool IsSkidHitting() const {
         return mPursuitMode == kSkid_Hit_Approach || mPursuitMode == kSkid_Hit_Strike;
     }
 
+    bool IsStriking() const {
+        return mPursuitMode == kSkid_Hit_Strike;
+    }
+
     void StraightLinePursuit();
+    void SkidHitPursuit();
+    void StrikePerp();
+    void Dive();
+    bool CanKeepDiving() const;
+    void BounceOff(const UMath::Vector3& outward);
+    bool IsPerpReversing() const;
+    bool KeepsUpWhileReversing() const;
+    bool ShouldStrikeNow() const;
+    void BeginStrike();
     void ChasePerp();
+    void LeadReversing(const UMath::Vector3& perpLinVel, float speed);
     void StartSearch();
     void SetNextSearchPoint();
     void SearchForPerp();

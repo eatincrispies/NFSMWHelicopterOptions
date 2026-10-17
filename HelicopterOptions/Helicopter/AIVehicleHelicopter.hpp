@@ -34,6 +34,10 @@ class AIVehicleHelicopter {
         float RespawnDelay    = 0.0f;
         bool  HidingSpots     = true;
         float DespawnDistance = 600.0f;
+        bool  KeepOut         = true;
+        float CollisionWidth  = 2.2f;
+        float CollisionHeight = 2.43f;
+        float CollisionLength = 4.9f;
     };
 
     static inline Settings sSettings;
@@ -49,9 +53,16 @@ class AIVehicleHelicopter {
         { "Helicopter:Respawning",     "RespawnDelay",   &sSettings.RespawnDelay,    nullptr, 0.0f,  600.0f,  false },
         { "Helicopter:HidingSpots",    "HidingSpots",    nullptr, &sSettings.HidingSpots,             0.0f,  1.0f,    true },
         { "Helicopter:DespawnDistance", "DespawnDistance", &sSettings.DespawnDistance, nullptr, 100.0f, 5000.0f, true },
+        { "Helicopter:KeepOut",        "KeepOut",         nullptr, &sSettings.KeepOut,                 0.0f,  1.0f,    true },
+        { "Helicopter:Collision",      "CollisionWidth",  &sSettings.CollisionWidth,  nullptr, 0.0f,  10.0f,   true },
+        { "Helicopter:Collision",      "CollisionHeight", &sSettings.CollisionHeight, nullptr, 0.0f,  10.0f,   true },
+        { "Helicopter:Collision",      "CollisionLength", &sSettings.CollisionLength, nullptr, 0.0f,  10.0f,   true },
     };
 
     static constexpr uintptr_t kOnDriving                              = 0x00417A20u;
+    static constexpr uintptr_t kAvoidCamera                            = 0x00417790u;
+    static constexpr Patch::CallSite kOnDrivingAvoidCamera             = { 0x00417B02u, kAvoidCamera };
+    static constexpr float     kNoBrakeRatio                           = 10000.0f;
     static constexpr uint8_t   kOnDrivingPrologue[5]                   = { 0x83, 0xEC, 0x68, 0x53, 0x55 };
     static constexpr uintptr_t kCanSeeTargetHeliLOSDistance            = 0x00417146u;
     static constexpr uint8_t   kCanSeeTargetHeliLOSDistancePrologue[8] = { 0x89, 0x54, 0x24, 0x24, 0xD9, 0x44, 0x24, 0x24 };
@@ -90,6 +101,10 @@ class AIVehicleHelicopter {
         Patch::Begin("AIVehicleHelicopter::OnDriving");
         Patch::RedirectFloat("stopping distance ratio", kOnDrivingStoppingRatio, &sBrake.stoppingRatio);
         Patch::RedirectFloat("braking mDriveSpeed scale", kOnDrivingBrakeSpeedScale, &sBrake.speedScale);
+        Patch::Commit();
+
+        Patch::Begin("AIVehicleHelicopter::OnDriving AvoidCamera");
+        Patch::RedirectCall("AvoidCamera", kOnDrivingAvoidCamera, Game::MethodAddress(&AIVehicleHelicopter::AvoidCameraHook));
         Patch::Commit();
 
         Patch::Begin("AICopManager::SpawnPursuitHelicopter");
@@ -137,6 +152,8 @@ class AIVehicleHelicopter {
     }
 
     void UpdateHelicopterOptions();
+    void StayOutOfPlayer(IRigidBody* rigidBody);
+    void AvoidCameraHook(UMath::Vector3& dest);
     void BeginHelicopter(const UMath::Vector3& position);
 
 #if defined(_DEBUG)
@@ -185,6 +202,54 @@ class EAXAirSupport {
     void Bailout();
     void HeliDestroyed();
 };
+
+namespace CollisionGeometry {
+
+    struct Bounds {
+        int16_t     fOrientation[4];
+        int16_t     fPosition[3];
+        uint16_t    fFlags;
+        int16_t     fHalfDimensions[3];
+        uint8_t     fNumChildren;
+        int8_t      fPCloudIndex;
+        int16_t     fPivot[3];
+        int16_t     fChildIndex;
+        float       fRadius;
+        uint32_t    fSurface;
+        uint32_t    fNameHash;
+        const void* fCollection;
+    };
+
+    struct Collection {
+        uint32_t fNameHash;
+        int      fNumBounds;
+        int      fIsResolved;
+        int      fPad;
+    };
+
+    class Collections {
+      public:
+        static constexpr uintptr_t       kFind                  = 0x00681340u;
+        static constexpr Patch::CallSite kPVehicleConstructFind = { 0x00689A09u, kFind };
+        static constexpr UMath::Vector3  kHeliCabinOffset       = { 0.0f, 0.212f, 1.175f };
+        static constexpr UMath::Vector3  kHeliTailOffset        = { 0.0f, 0.707f, -3.775f };
+        static constexpr UMath::Vector3  kHeliTailHalf          = { 0.5f, 0.95f, 2.5f };
+
+        static inline UMath::Vector3 sCabinOffset = kHeliCabinOffset;
+        static inline UMath::Vector3 sCabinHalf   = { 1.1f, 1.215f, 2.45f };
+        static inline bool           sTailBox     = true;
+
+        static void InstallPatches() {
+            Patch::Begin("PVehicle::Construct CollisionGeometry::Collections::Find");
+            Patch::RedirectCall("Collections::Find", kPVehicleConstructFind, Game::MethodAddress(&Collections::VehicleFind));
+            Patch::Commit();
+        }
+
+        const Collection* Find(uint32_t name);
+        const Collection* VehicleFind(uint32_t name);
+    };
+
+}
 
 class AICopManager {
   public:
