@@ -1205,6 +1205,8 @@ namespace {
 
         AIActionHeliPursuit::InstallPatches();
         AIVehicleHelicopter::InstallPatches();
+        HeliSheetCoordinate::InstallPatches();
+        CollisionGeometry::Collections::InstallPatches();
         SimpleChopper::InstallPatches();
         AIActionHeliExit::InstallPatches();
 

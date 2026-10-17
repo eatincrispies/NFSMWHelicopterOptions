@@ -248,6 +248,22 @@ class IRigidBody : public UTL::COM::IUnknown {
     virtual void GetForwardVector(UMath::Vector3& vec) const = 0;
     virtual void GetRightVector(UMath::Vector3& vec) const = 0;
     virtual void GetUpVector(UMath::Vector3& vec) const = 0;
+
+    static constexpr unsigned kGetDimension      = 0x48u;
+    static constexpr unsigned kSetPosition       = 0x5Cu;
+    static constexpr unsigned kSetLinearVelocity = 0x60u;
+
+    void GetDimension(UMath::Vector3& dim) const {
+        Game::ThisCall<void>(Game::VirtualFunction(this, kGetDimension), this, &dim);
+    }
+
+    void SetPosition(const UMath::Vector3& pos) {
+        Game::ThisCall<void>(Game::VirtualFunction(this, kSetPosition), this, &pos);
+    }
+
+    void SetLinearVelocity(const UMath::Vector3& vel) {
+        Game::ThisCall<void>(Game::VirtualFunction(this, kSetLinearVelocity), this, &vel);
+    }
 };
 
 class IPlayer : public UTL::COM::IUnknown {
