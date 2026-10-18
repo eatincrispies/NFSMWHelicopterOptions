@@ -150,6 +150,56 @@ class WRoadNetwork {
     }
 };
 
+struct TrackPathZone {
+    bool IsPointInside(const bVector2& point) const;
+
+    const TrackPathZone* GetMemoryImageNext() const {
+        return reinterpret_cast<const TrackPathZone*>(reinterpret_cast<const char*>(this) + MemoryImageSize);
+    }
+
+    int      Type;
+    bVector2 Position;
+    bVector2 Direction;
+    float    Elevation;
+    int8_t   ZoneSource;
+    int8_t   CachedIndex;
+    int16_t  VisitInfo;
+    void*    pUserData;
+    bVector2 BBoxMin;
+    bVector2 BBoxMax;
+    int32_t  Data[4];
+    int16_t  NumPoints;
+    int16_t  MemoryImageSize;
+    bVector2 Points[64];
+};
+
+class TrackPathManager {
+  public:
+    static constexpr uintptr_t kTheTrackPathManager           = 0x009AA540u;
+    static constexpr int       TRACK_PATH_ZONE_TUNNEL         = 3;
+    static constexpr int       TRACK_PATH_ZONE_OVERPASS       = 4;
+    static constexpr int       TRACK_PATH_ZONE_OVERPASS_SMALL = 5;
+    static constexpr int       NUM_TRACK_PATH_ZONES           = 15;
+
+    struct ZoneInfo {
+        int                  NumZones;
+        const TrackPathZone* pFirstZone;
+        const TrackPathZone* pLastZone;
+        unsigned char        mCache[0x40];
+    };
+
+    static const TrackPathManager& Get() {
+        return Game::Global<TrackPathManager>(kTheTrackPathManager);
+    }
+
+    const TrackPathZone* FindCover(const bVector2& point, float height) const;
+
+    int                  NumZones;
+    int                  SizeofZones;
+    const TrackPathZone* pZones;
+    ZoneInfo             ZoneInfoTable[NUM_TRACK_PATH_ZONES];
+};
+
 struct HeliSheetCoordinate {
     static constexpr uintptr_t       kGetElevation              = 0x00754290u;
     static constexpr Patch::CallSite kFilterHeliAltitude        = { 0x004099A6u, kGetElevation };
@@ -178,14 +228,22 @@ namespace HeliSheet {
         { "Helicopter:IgnoreHeliSheetDistance", "IgnoreHeliSheetDistance", &sSettings.IgnoreHeliSheetDistance, nullptr,              0.0f, 2000.0f, false },
     };
 
-    void BeginHelicopter();
-    void Update(const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit);
+    struct State {
+        bool farFromTarget = false;
+#if defined(_DEBUG)
+        bool loggedIgnore = false;
+        bool loggedReady = false;
+#endif
+    };
+
+    void Update(State& state, const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit);
     bool GroundUnder(float x, float z, float top, float& groundY);
+    bool UnderCover(const UMath::Vector3& point);
 
 #if defined(_DEBUG)
-    void LogLive(bool full);
+    void LogLive(State& state, bool full);
 #else
-    inline void LogLive(bool) {}
+    inline void LogLive(State&, bool) {}
 #endif
 
 }

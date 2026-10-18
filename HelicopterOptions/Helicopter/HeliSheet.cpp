@@ -17,6 +17,7 @@ namespace {
     constexpr float     kRoadClearance        = 1.0f;
     constexpr float     kFaceTolerance        = 0.025f;
     constexpr float     kAboveSheet           = 1.0f;
+    constexpr float     kAboveCover           = 1.0f;
     constexpr float     kRoadPieceLength      = 4.0f;
     constexpr int       kMostRoadPieces       = 48;
     constexpr float     kRoadCell             = 32.0f;
@@ -40,6 +41,16 @@ namespace {
     static_assert(offsetof(WWorldPos, fYOffset) == 0x34, "WWorldPos::fYOffset");
     static_assert(offsetof(WWorldPos, fSurface) == 0x38, "WWorldPos::fSurface");
     static_assert(sizeof(WWorldPos) == 0x3C, "WWorldPos");
+    static_assert(offsetof(TrackPathZone, Elevation) == 0x14, "TrackPathZone::Elevation");
+    static_assert(offsetof(TrackPathZone, BBoxMin) == 0x20, "TrackPathZone::BBoxMin");
+    static_assert(offsetof(TrackPathZone, NumPoints) == 0x40, "TrackPathZone::NumPoints");
+    static_assert(offsetof(TrackPathZone, Points) == 0x44, "TrackPathZone::Points");
+    static_assert(sizeof(TrackPathZone) == 0x244, "TrackPathZone");
+    static_assert(sizeof(TrackPathManager::ZoneInfo) == 0x4C, "TrackPathManager::ZoneInfo");
+    static_assert(offsetof(TrackPathManager, ZoneInfoTable) == 0xC, "TrackPathManager::ZoneInfoTable");
+
+    constexpr int kCoverZones[] = { TrackPathManager::TRACK_PATH_ZONE_TUNNEL, TrackPathManager::TRACK_PATH_ZONE_OVERPASS,
+                                    TrackPathManager::TRACK_PATH_ZONE_OVERPASS_SMALL };
 
     constexpr uint32_t kRoadSurfaces[] = {
         0x19DB2F1Eu,
@@ -53,12 +64,7 @@ namespace {
     constexpr size_t   kNumRoadSurfaces = sizeof(kRoadSurfaces) / sizeof(kRoadSurfaces[0]);
     constexpr uint32_t kDefaultSurface = 0u;
 
-    bool gFarFromTarget = false;
-    bool gIgnoring = false;
-
 #if defined(_DEBUG)
-    bool          gLoggedIgnore = false;
-    bool          gLoggedReady = false;
     unsigned long gLastFloorLogMs = 0;
 #endif
 
@@ -74,17 +80,17 @@ namespace {
         return pursuit != nullptr && pursuit->IsSkidHitting() && !NeverIgnoreHeliSheet();
     }
 
-    bool IsOutOfRange(const UMath::Vector3& heliPosition) {
+    bool IsOutOfRange(bool farFromTarget, const UMath::Vector3& heliPosition) {
         const float ignoreDistance = HeliSheet::sSettings.IgnoreHeliSheetDistance;
         IRigidBody* playerRigidBody = ignoreDistance > 0.0f ? GetLocalPlayerRigidBody() : nullptr;
         if (playerRigidBody == nullptr) return false;
 
         const float distance = UMath::Distancexz(heliPosition, playerRigidBody->GetPosition());
-        const float limit = gFarFromTarget ? ignoreDistance * kReturnFraction : ignoreDistance;
+        const float limit = farFromTarget ? ignoreDistance * kReturnFraction : ignoreDistance;
         const bool  outOfRange = distance > limit;
-        if (outOfRange != gFarFromTarget)
+        if (outOfRange != farFromTarget)
             Log::Info("HeliSheet  dXZ=%.2f %s %.2f  IgnoreHeliSheetDistance=%g return=%g  far %d -> %d", distance, outOfRange ? ">" : "<=", limit,
-                      ignoreDistance, ignoreDistance * kReturnFraction, gFarFromTarget, outOfRange);
+                      ignoreDistance, ignoreDistance * kReturnFraction, farFromTarget, outOfRange);
         return outOfRange;
     }
 
@@ -305,6 +311,31 @@ void HeliSheetCoordinate::InstallPatches() {
     Patch::Commit();
 }
 
+bool TrackPathZone::IsPointInside(const bVector2& point) const {
+    if (point.x < BBoxMin.x || point.x > BBoxMax.x || point.y < BBoxMin.y || point.y > BBoxMax.y) return false;
+    const int count = std::min<int>(NumPoints, 64);
+    bool      inside = false;
+    for (int i = 0, j = count - 1; i < count; j = i++) {
+        const bVector2& a = Points[i];
+        const bVector2& b = Points[j];
+        if ((a.y > point.y) != (b.y > point.y) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+}
+
+const TrackPathZone* TrackPathManager::FindCover(const bVector2& point, float height) const {
+    if (pZones == nullptr) return nullptr;
+    for (int type : kCoverZones) {
+        const ZoneInfo& info = ZoneInfoTable[type];
+        if (info.NumZones <= 0 || info.pFirstZone == nullptr) continue;
+        for (const TrackPathZone* zone = info.pFirstZone; zone < info.pLastZone; zone = zone->GetMemoryImageNext()) {
+            if (zone->MemoryImageSize <= 0) break;
+            if (zone->Type == type && height < zone->Elevation && zone->IsPointInside(point)) return zone;
+        }
+    }
+    return nullptr;
+}
+
 float WWorldPos::HeightAt(float x, float z) const {
     const UMath::Vector3 u = fFace.fPt1 - fFace.fPt0;
     const UMath::Vector3 v = fFace.fPt2 - fFace.fPt0;
@@ -342,39 +373,37 @@ bool HeliSheet::GroundUnder(float x, float z, float top, float& groundY) {
     if (ground.OnValidFace()) {
         if (!onRoad && !gRoadSurfaces.Contains(ground.GetSurface())) return false;
         groundY = ground.HeightAt(x, z);
-        return true;
+    } else {
+        if (!onRoad) return false;
+        groundY = roadY;
     }
-    if (!onRoad) return false;
-    groundY = roadY;
+    const TrackPathZone* cover = TrackPathManager::Get().FindCover({ z, -x }, groundY);
+    if (cover == nullptr) return true;
+    if (cover->Type == TrackPathManager::TRACK_PATH_ZONE_TUNNEL) return false;
+    groundY = std::max(groundY, cover->Elevation + kAboveCover);
     return true;
 }
 
-void HeliSheet::BeginHelicopter() {
-    gFarFromTarget = false;
+bool HeliSheet::UnderCover(const UMath::Vector3& point) {
+    return TrackPathManager::Get().FindCover({ point.z, -point.x }, point.y) != nullptr;
 }
 
-void HeliSheet::Update(const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit) {
-    gFarFromTarget = IsOutOfRange(heliPosition);
-
-    const bool ignore = !sSettings.HeliSheet || gFarFromTarget;
-    if (ignore || gIgnoring) {
-        bIgnoreHeliSheet() = ignore || GameIgnoresDuringSkidHit(pursuit);
-        gIgnoring = ignore;
-    }
+void HeliSheet::Update(State& state, const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit) {
+    state.farFromTarget = IsOutOfRange(state.farFromTarget, heliPosition);
+    bIgnoreHeliSheet() = !sSettings.HeliSheet || state.farFromTarget || GameIgnoresDuringSkidHit(pursuit);
 }
 
 #if defined(_DEBUG)
-void HeliSheet::LogLive(bool full) {
+void HeliSheet::LogLive(State& state, bool full) {
     const bool ignore = bIgnoreHeliSheet();
-    if (!gLoggedReady || ignore != gLoggedIgnore) {
-        Log::Info("HeliSheet  bIgnoreHeliSheet[0x%08X] %d -> %d  NeverIgnoreHeliSheet[0x%08X]=%d far=%d forced=%d", kbIgnoreHeliSheet, gLoggedIgnore,
-                  ignore, kNeverIgnoreHeliSheet, NeverIgnoreHeliSheet(), gFarFromTarget, gIgnoring);
-        gLoggedIgnore = ignore;
-        gLoggedReady = true;
+    if (!state.loggedReady || ignore != state.loggedIgnore) {
+        Log::Info("HeliSheet  bIgnoreHeliSheet[0x%08X] %d -> %d  NeverIgnoreHeliSheet[0x%08X]=%d far=%d", kbIgnoreHeliSheet, state.loggedIgnore, ignore,
+                  kNeverIgnoreHeliSheet, NeverIgnoreHeliSheet(), state.farFromTarget);
+        state.loggedIgnore = ignore;
+        state.loggedReady = true;
     }
     if (full)
-        Log::Info("HeliSheet  bIgnoreHeliSheet[0x%08X]=%d NeverIgnoreHeliSheet[0x%08X]=%d  HeliSheet=%d IgnoreHeliSheetDistance=%g far=%d forced=%d",
-                  kbIgnoreHeliSheet, ignore, kNeverIgnoreHeliSheet, NeverIgnoreHeliSheet(), sSettings.HeliSheet, sSettings.IgnoreHeliSheetDistance,
-                  gFarFromTarget, gIgnoring);
+        Log::Info("HeliSheet  bIgnoreHeliSheet[0x%08X]=%d NeverIgnoreHeliSheet[0x%08X]=%d  HeliSheet=%d IgnoreHeliSheetDistance=%g far=%d", kbIgnoreHeliSheet,
+                  ignore, kNeverIgnoreHeliSheet, NeverIgnoreHeliSheet(), sSettings.HeliSheet, sSettings.IgnoreHeliSheetDistance, state.farFromTarget);
 }
 #endif

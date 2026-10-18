@@ -4,7 +4,82 @@
 
 class AIActionHeliPursuit;
 class ISimpleChopper;
+class IPursuit;
+class IVehicleAI;
 class WRoadNav;
+struct AITarget;
+
+class IPursuitAI : public UTL::COM::IUnknown {
+  public:
+    static constexpr unsigned kGetPursuitTarget          = 0x24u;
+    static constexpr unsigned kGetTimeSinceTargetSeen    = 0x74u;
+    static constexpr unsigned kWasWithinEngagementRadius = 0x8Cu;
+
+    AITarget* GetPursuitTarget() const {
+        return Game::ThisCall<AITarget*>(Game::VirtualFunction(this, kGetPursuitTarget), this);
+    }
+
+    float GetTimeSinceTargetSeen() const {
+        return Game::ThisCall<float>(Game::VirtualFunction(this, kGetTimeSinceTargetSeen), this);
+    }
+
+    bool WasWithinEngagementRadius() const {
+        return Game::ThisCall<bool>(Game::VirtualFunction(this, kWasWithinEngagementRadius), this);
+    }
+};
+
+class IVehicle : public UTL::COM::IUnknown {
+  public:
+    struct List {
+        void*      mVTable;
+        IVehicle** mBegin;
+        size_t     mCapacity;
+        size_t     mSize;
+    };
+
+    static constexpr uintptr_t kAICops            = 0x0092CE98u;
+    static constexpr uintptr_t kCHOPPER           = 0x0092C4F4u;
+    static constexpr uintptr_t kFindInterface     = 0x005D59F0u;
+    static constexpr uintptr_t kIPursuitAIHandle  = 0x004038E0u;
+    static constexpr unsigned  kGetSimable        = 0x04u;
+    static constexpr unsigned  kGetPosition       = 0x0Cu;
+    static constexpr unsigned  kGetVehicleClass   = 0x44u;
+    static constexpr unsigned  kIsDestroyed       = 0x7Cu;
+    static constexpr unsigned  kIsActive          = 0x88u;
+    static constexpr unsigned  kGetAIVehiclePtr   = 0xACu;
+
+    static const List& AICops() {
+        return Game::Global<List>(kAICops);
+    }
+
+    ISimable* GetSimable() const {
+        return Game::ThisCall<ISimable*>(Game::VirtualFunction(this, kGetSimable), this);
+    }
+
+    bool IsChopper() const {
+        const uint32_t* vehicleClass = Game::ThisCall<const uint32_t*>(Game::VirtualFunction(this, kGetVehicleClass), this);
+        return vehicleClass != nullptr && *vehicleClass == Game::Global<uint32_t>(kCHOPPER);
+    }
+
+    bool IsDestroyed() const {
+        return Game::ThisCall<bool>(Game::VirtualFunction(this, kIsDestroyed), this);
+    }
+
+    bool IsActive() const {
+        return Game::ThisCall<bool>(Game::VirtualFunction(this, kIsActive), this);
+    }
+
+    IVehicleAI* GetAIVehiclePtr() const {
+        return Game::ThisCall<IVehicleAI*>(Game::VirtualFunction(this, kGetAIVehiclePtr), this);
+    }
+
+    IPursuitAI* GetPursuitAI() const {
+        const void* object = *reinterpret_cast<const void* const*>(reinterpret_cast<uintptr_t>(this) + sizeof(void*));
+        return object != nullptr ? Game::ThisCall<IPursuitAI*>(kFindInterface, object, kIPursuitAIHandle) : nullptr;
+    }
+
+    bool IsActiveOnMinimap() const;
+};
 
 class IAIHelicopter : public UTL::COM::IUnknown {
   public:
@@ -34,11 +109,10 @@ class AIVehicleHelicopter {
         float RespawnDelay    = 0.0f;
         bool  HidingSpots     = true;
         float DespawnDistance = 600.0f;
-        bool  KeepOut         = true;
-        float CollisionWidth  = 2.2f;
-        float CollisionHeight = 2.43f;
-        float CollisionLength = 4.9f;
+        float Helicopters     = 1.0f;
     };
+
+    static constexpr int kMostHelicopters = 4;
 
     static inline Settings sSettings;
 
@@ -53,10 +127,7 @@ class AIVehicleHelicopter {
         { "Helicopter:Respawning",     "RespawnDelay",   &sSettings.RespawnDelay,    nullptr, 0.0f,  600.0f,  false },
         { "Helicopter:HidingSpots",    "HidingSpots",    nullptr, &sSettings.HidingSpots,             0.0f,  1.0f,    true },
         { "Helicopter:DespawnDistance", "DespawnDistance", &sSettings.DespawnDistance, nullptr, 100.0f, 5000.0f, true },
-        { "Helicopter:KeepOut",        "KeepOut",         nullptr, &sSettings.KeepOut,                 0.0f,  1.0f,    true },
-        { "Helicopter:Collision",      "CollisionWidth",  &sSettings.CollisionWidth,  nullptr, 0.0f,  10.0f,   true },
-        { "Helicopter:Collision",      "CollisionHeight", &sSettings.CollisionHeight, nullptr, 0.0f,  10.0f,   true },
-        { "Helicopter:Collision",      "CollisionLength", &sSettings.CollisionLength, nullptr, 0.0f,  10.0f,   true },
+        { "Helicopter:Helicopters",    "Helicopters",     &sSettings.Helicopters,     nullptr, 1.0f,   4.0f,    true },
     };
 
     static constexpr uintptr_t kOnDriving                              = 0x00417A20u;
@@ -143,6 +214,7 @@ class AIVehicleHelicopter {
     }
 
     static void Refresh();
+    static int  Helicopters();
     static void __cdecl OnDrivingEntry(Detour::Registers* registers);
     static void __cdecl CanSeeTargetEntry(Detour::Registers* registers);
     static void __cdecl RespawnTimerEntry(Detour::Registers* registers);
@@ -152,9 +224,9 @@ class AIVehicleHelicopter {
     }
 
     void UpdateHelicopterOptions();
-    void StayOutOfPlayer(IRigidBody* rigidBody);
     void AvoidCameraHook(UMath::Vector3& dest);
     void BeginHelicopter(const UMath::Vector3& position);
+    void KeepApart(IRigidBody* rigidBody) const;
 
 #if defined(_DEBUG)
     void LogLive(const IRigidBody* rigidBody, const AIActionHeliPursuit* pursuit) const;
@@ -184,8 +256,6 @@ class AIVehicleHelicopter {
     HeliSheetCoordinate mThirdHeliSheetCoord;
     ISimpleChopper*     mISimpleChopper;
 };
-
-bool HeliVehicleActive();
 
 class EAXAirSupport {
   public:
@@ -232,12 +302,9 @@ namespace CollisionGeometry {
         static constexpr uintptr_t       kFind                  = 0x00681340u;
         static constexpr Patch::CallSite kPVehicleConstructFind = { 0x00689A09u, kFind };
         static constexpr UMath::Vector3  kHeliCabinOffset       = { 0.0f, 0.212f, 1.175f };
+        static constexpr UMath::Vector3  kHeliCabinHalf         = { 1.0f, 1.1f, 2.25f };
         static constexpr UMath::Vector3  kHeliTailOffset        = { 0.0f, 0.707f, -3.775f };
         static constexpr UMath::Vector3  kHeliTailHalf          = { 0.5f, 0.95f, 2.5f };
-
-        static inline UMath::Vector3 sCabinOffset = kHeliCabinOffset;
-        static inline UMath::Vector3 sCabinHalf   = { 1.1f, 1.215f, 2.45f };
-        static inline bool           sTailBox     = true;
 
         static void InstallPatches() {
             Patch::Begin("PVehicle::Construct CollisionGeometry::Collections::Find");
@@ -255,6 +322,7 @@ class AICopManager {
   public:
     static constexpr uintptr_t kApplyBreakerZones            = 0x0042E930u;
     static constexpr uint8_t   kApplyBreakerZonesPrologue[6] = { 0x83, 0xEC, 0x10, 0x57, 0x8B, 0xF9 };
+    static constexpr uintptr_t kSpawnPursuitHelicopter       = 0x004269A0u;
 
     static bool HookApplyBreakerZones() {
         return Detour::Install("AICopManager::ApplyBreakerZones", kApplyBreakerZones, kApplyBreakerZonesPrologue, sizeof(kApplyBreakerZonesPrologue),
@@ -264,6 +332,126 @@ class AICopManager {
     static void __cdecl ApplyBreakerZonesEntry(Detour::Registers* registers);
 
     bool HasVehicle(uintptr_t vehicle) const;
-    uintptr_t FindVehicle(const ISimable* simable) const;
     void UpdateBreakerFire();
+    IPursuit* GetPlayerPursuit() const;
+    int GetNumActiveCopHelicopters() const;
+    bool SpawnPursuitHelicopter(IPursuit* ipursuit);
+    void UpdateHelicopterTopUp();
+};
+
+class FEObject;
+
+struct FEMinList {
+    static constexpr uintptr_t kAddNode = 0x005AEE90u;
+
+    void AddNode(FEObject* after, FEObject* node) {
+        Game::ThisCall<void>(kAddNode, this, after, node);
+    }
+
+    void*     mVTable;
+    unsigned  NumElements;
+    FEObject* Head;
+    FEObject* Tail;
+};
+
+class FEObject {
+  public:
+    static constexpr int      FE_Group     = 5;
+    static constexpr uint32_t FF_Invisible = 1u;
+    static constexpr unsigned kClone       = 0x04u;
+
+    FEObject* Clone(bool bReference) {
+        return Game::ThisCall<FEObject*>(Game::VirtualFunction(this, kClone), this, bReference);
+    }
+
+    void*          mVTable;
+    FEObject*      Next;
+    FEObject*      Prev;
+    uint32_t       GUID;
+    uint32_t       NameHash;
+    char*          pName;
+    int            Type;
+    uint32_t       Flags;
+    uint16_t       RenderContext;
+    uint16_t       ResourceIndex;
+    uint32_t       Handle;
+    uint32_t       UserParam;
+    unsigned char* pData;
+    uint32_t       DataSize;
+    FEMinList      Responses;
+    FEMinList      Scripts;
+    void*          pCurrentScript;
+    void*          Cached;
+};
+
+class FEGroup : public FEObject {
+  public:
+    FEMinList Children;
+};
+
+class FEMultiImage : public FEObject {
+  public:
+    static constexpr int FE_MultiImage = 12;
+
+    uint32_t ImageFlags;
+    uint32_t hTexture[3];
+    uint32_t TextureFlags[3];
+};
+
+class FEPackage {
+  public:
+    unsigned char mPackage[0x44];
+    FEMinList     Objects;
+};
+
+struct bPList {
+    static constexpr uintptr_t kAddTail = 0x0058AF10u;
+
+    void AddTail(FEObject* object) {
+        Game::ThisCall<void>(kAddTail, this, object);
+    }
+
+    void* HeadNode[2];
+};
+
+class cFEng {
+  public:
+    static constexpr uintptr_t kmInstance   = 0x0091CADCu;
+    static constexpr uintptr_t kFindPackage = 0x00516AF0u;
+
+    static cFEng* Get() {
+        return Game::Global<cFEng*>(kmInstance);
+    }
+
+    FEPackage* FindPackage(const char* name) {
+        return Game::ThisCall<FEPackage*>(kFindPackage, this, name);
+    }
+};
+
+class Minimap {
+  public:
+    static constexpr uintptr_t           kUpdateCopElements         = 0x00579E00u;
+    static constexpr uintptr_t           kUpdateElementArt          = 0x005675D0u;
+    static constexpr Patch::CallSite     kUpdateUpdateCopElements   = { 0x0059DCFDu, kUpdateCopElements };
+    static constexpr Patch::IndirectCall kUpdateCopElementsIsActive = { 0x00579E94u, { 0xFF, 0x90, 0x88, 0x00, 0x00, 0x00 } };
+
+    static void InstallPatches() {
+        Patch::Begin("Minimap::UpdateCopElements");
+        Patch::RedirectCall("UpdateCopElements", kUpdateUpdateCopElements, Game::MethodAddress(&Minimap::UpdateHelicopterElements));
+        Patch::RedirectIndirectCall("(*iter)->IsActive()", kUpdateCopElementsIsActive, Game::MethodAddress(&IVehicle::IsActiveOnMinimap));
+        Patch::Commit();
+    }
+
+    void UpdateCopElements(IVehicle* ivehicle);
+    void UpdateHelicopterElements(IVehicle* ivehicle);
+    void UpdateElementArt(bVector2* elementPos, bVector2* elementDir, FEObject* elementArt, bool pulse);
+    void UpdateHelicopterElement(IVehicle* helicopter, FEObject* heliArt, FEObject* lineOfSiteArt);
+    bool ShowsPursuitCops(IVehicle* ivehicle) const;
+
+    unsigned char mHudElement[0x8];
+    bPList        Objects;
+    const char*   pPackageName;
+    unsigned char mMinimap[0xB4];
+    FEObject*     mHeliElementArt;
+    FEObject*     mHeliLineOfSiteArt;
 };

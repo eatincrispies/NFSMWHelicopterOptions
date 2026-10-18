@@ -100,9 +100,6 @@ class AIActionHeliPursuit {
         float SearchSpeedMax      = 20.0f;
         float SearchRadiusFirst   = 80.0f;
         float SearchRadiusLargest = 250.0f;
-        float StrikeHeight        = 0.4f;
-        float LineUpDistance      = 6.0f;
-        float ShoveTime           = 0.35f;
     };
 
     static inline Settings sSettings;
@@ -118,9 +115,6 @@ class AIActionHeliPursuit {
         { "Helicopter:SearchSpeed",    "SearchSpeedMax",      &sSettings.SearchSpeedMax,      nullptr, 5.0f,  120.0f,  true },
         { "Helicopter:SearchRadius",   "SearchRadiusFirst",   &sSettings.SearchRadiusFirst,   nullptr, 20.0f, 1000.0f, true },
         { "Helicopter:SearchRadius",   "SearchRadiusLargest", &sSettings.SearchRadiusLargest, nullptr, 20.0f, 2000.0f, true },
-        { "Helicopter:StrikeHeight",   "StrikeHeight",        &sSettings.StrikeHeight,        nullptr, -2.0f, 5.0f,    true },
-        { "Helicopter:LineUpDistance", "LineUpDistance",      &sSettings.LineUpDistance,      nullptr, 2.0f,  20.0f,   true },
-        { "Helicopter:ShoveTime",      "ShoveTime",           &sSettings.ShoveTime,           nullptr, 0.0f,  5.0f,    true },
     };
 
     static constexpr uintptr_t kConstructor            = 0x00420EC0u;
@@ -197,7 +191,6 @@ class AIActionHeliPursuit {
     static void Refresh();
     static void __cdecl ConstructorEntry(Detour::Registers* registers);
     static AIActionHeliPursuit* Find(const IRigidBody* heliRigidBody);
-    static void TouchedPlayer();
 
     bool IsSkidHitting() const {
         return mPursuitMode == kSkid_Hit_Approach || mPursuitMode == kSkid_Hit_Strike;
@@ -212,6 +205,7 @@ class AIActionHeliPursuit {
     void StrikePerp();
     void Dive();
     bool CanKeepDiving() const;
+    bool IsPerpUnderCover() const;
     void BounceOff(const UMath::Vector3& outward);
     bool IsPerpReversing() const;
     bool KeepsUpWhileReversing() const;
@@ -219,6 +213,8 @@ class AIActionHeliPursuit {
     void BeginStrike();
     void ChasePerp();
     void LeadReversing(const UMath::Vector3& perpLinVel, float speed);
+    void HoldFormationSpot(int place, const UMath::Vector3& perpLinVel);
+    void ChaseToward(const UMath::Vector3& seek, const UMath::Vector3& perpLinVel);
     void StartSearch();
     void SetNextSearchPoint();
     void SearchForPerp();
