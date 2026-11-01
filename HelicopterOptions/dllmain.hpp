@@ -1,88 +1,63 @@
 #pragma once
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <stddef.h>
+#include <string.h>
 
-namespace Log {
+#define SIM_GET_TIME                     0x006E8DE0
 
-#if defined(_DEBUG)
-    using Name = const char*;
+#define IRIGIDBODY_GET_DIMENSION         0x048
+#define IRIGIDBODY_SET_LINEAR_VELOCITY   0x060
+#define IRIGIDBODY_SET_ANGULAR_VELOCITY  0x064
 
-    void Open(void* module);
-    void Close();
-    void CheckRotate();
-
-    void Info(const char* format, ...);
-    void Warn(const char* format, ...);
-    void Error(const char* format, ...);
-#else
-    struct Name {
-        constexpr Name(const char* = nullptr) {}
-    };
-
-    inline void Open(void*) {}
-    inline void Close() {}
-    inline void CheckRotate() {}
-
-    template <typename... Args> void Info(const char*, const Args&...) {}
-    template <typename... Args> void Warn(const char*, const Args&...) {}
-    template <typename... Args> void Error(const char*, const Args&...) {}
-#endif
-
-}
+typedef void  (__thiscall* VoidMethod)(void* object);
+typedef void  (__thiscall* IntMethod)(void* object, int value);
+typedef void  (__thiscall* PointerMethod)(void* object, const void* value);
+typedef bool  (__thiscall* BoolQuery)(const void* object);
+typedef float (__thiscall* FloatQuery)(const void* object);
+typedef void* (__thiscall* PointerQuery)(const void* object);
+typedef float (__cdecl* FloatFunction)(void);
 
 namespace Memory {
 
     bool IsFinite(float value);
-    bool CheckBytes(uintptr_t va, const uint8_t* expected, size_t length);
-    bool Read(uintptr_t va, void* out, size_t length);
-    bool WriteData(uintptr_t va, const void* bytes, size_t length);
-    bool WriteCode(uintptr_t va, const void* bytes, size_t length);
-    void DescribeBytes(uintptr_t va, size_t length, char* out, size_t outLength);
+    bool Matches(DWORD address, const BYTE* expected, size_t length);
+    bool Read(DWORD address, void* out, size_t length);
+    bool WriteData(DWORD address, const void* bytes, size_t length);
+    bool WriteCode(DWORD address, const void* bytes, size_t length);
 
 }
 
-namespace Game {
+float Seconds(int milliseconds);
+float Metres(int millimetres);
+float Fraction(int percent);
+float Smaller(float a, float b);
+float Larger(float a, float b);
+float Clamp(float value, float low, float high);
+int   ClampInt(int value, int low, int high);
 
-    template <typename Return, typename... Args>
-    Return ThisCall(uintptr_t function, Args... args) {
-        return reinterpret_cast<Return (__thiscall*)(Args...)>(function)(args...);
-    }
+inline DWORD VirtualFunction(const void* object, DWORD slot) {
+    return (*(const DWORD* const*)object)[slot / sizeof(DWORD)];
+}
 
-    template <typename Return, typename... Args>
-    Return Call(uintptr_t function, Args... args) {
-        return reinterpret_cast<Return (__cdecl*)(Args...)>(function)(args...);
-    }
-
-    template <typename Method>
-    const void* MethodAddress(Method method) {
-        static_assert(sizeof(method) == sizeof(void*), "only plain member functions have a single code address");
-        const void* address = nullptr;
-        std::memcpy(&address, &method, sizeof(address));
-        return address;
-    }
-
-    template <typename T>
-    T& Global(uintptr_t va) {
-        return *reinterpret_cast<T*>(va);
-    }
-
-    inline uintptr_t VirtualFunction(const void* object, unsigned slot) {
-        return (*static_cast<const uintptr_t* const*>(object))[slot / sizeof(uintptr_t)];
-    }
-
+template <typename Method>
+const void* MethodAddress(Method method) {
+    C_ASSERT(sizeof(Method) == sizeof(void*));
+    const void* address = NULL;
+    memcpy(&address, &method, sizeof(address));
+    return address;
 }
 
 namespace Detour {
 
     struct Registers {
-        uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax;
-        uint32_t eflags;
+        DWORD edi, esi, ebp, esp, ebx, edx, ecx, eax;
+        DWORD eflags;
     };
 
-    using Entry = void (__cdecl*)(Registers* registers);
+    typedef void (__cdecl* Entry)(Registers* registers);
 
-    bool Install(Log::Name name, uintptr_t va, const uint8_t* prologue, size_t length, Entry entry);
+    bool Install(DWORD address, const BYTE* prologue, size_t length, Entry entry);
     void RemoveAll();
 
 }
@@ -90,52 +65,115 @@ namespace Detour {
 namespace Patch {
 
     struct FloatOperand {
-        uintptr_t va;
-        uint8_t   opcode[2];
-        uintptr_t constant;
+        DWORD address;
+        BYTE  opcode[2];
+        DWORD constant;
     };
 
     struct FloatPush {
-        uintptr_t va;
-        float     value;
+        DWORD address;
+        float value;
     };
 
     struct CallSite {
-        uintptr_t va;
-        uintptr_t target;
+        DWORD address;
+        DWORD target;
     };
 
     struct FloatStore {
-        uintptr_t va;
-        uint8_t   opcode[3];
-        float     value;
+        DWORD address;
+        BYTE  opcode[3];
+        float value;
     };
 
     struct ByteStore {
-        uintptr_t va;
-        uint8_t   code[6];
-        uint8_t   value;
+        DWORD address;
+        BYTE  code[6];
+        BYTE  value;
     };
 
-    void Begin(Log::Name group);
-    void RedirectFloat(Log::Name name, const FloatOperand& site, const float* value);
-    void PushFloat(Log::Name name, const FloatPush& site, float value);
-    void RedirectCall(Log::Name name, const CallSite& site, const void* replacement);
-    void RedirectVirtual(Log::Name name, uintptr_t slot, uintptr_t function, const void* replacement);
-    void DataFloat(Log::Name name, uintptr_t va, float vanilla, float value);
-    void StoreFloat(Log::Name name, const FloatStore& site, float value);
-    void StoreByte(Log::Name name, const ByteStore& site, uint8_t value);
+    struct IndirectCall {
+        DWORD address;
+        BYTE  code[6];
+    };
+
+    struct JumpSite {
+        DWORD address;
+        BYTE  opcode[2];
+        DWORD target;
+    };
+
+    void Begin();
+    void RedirectFloat(const FloatOperand& site, const float* value);
+    void PushFloat(const FloatPush& site, float value);
+    void RedirectCall(const CallSite& site, const void* replacement);
+    void RedirectIndirectCall(const IndirectCall& site, const void* replacement);
+    void RedirectJump(const JumpSite& site, const void* replacement);
+    void RedirectVirtual(DWORD slot, DWORD function, const void* replacement);
+    void DataFloat(DWORD address, float vanilla, float value);
+    void StoreFloat(const FloatStore& site, float value);
+    void StoreByte(const ByteStore& site, BYTE value);
     bool Commit();
 
-    bool RewritePushedFloat(Log::Name name, const FloatPush& site, float from, float to);
-    bool RewriteStoredFloat(Log::Name name, const FloatStore& site, float from, float to);
-    bool RewriteStoredByte(Log::Name name, const ByteStore& site, uint8_t from, uint8_t to);
+    bool RewritePushedFloat(const FloatPush& site, float from, float to);
+    bool RewriteStoredFloat(const FloatStore& site, float from, float to);
+    bool RewriteStoredByte(const ByteStore& site, BYTE from, BYTE to);
 
-    int  SkippedGroups();
-    int  FailedGroups();
     void RestoreAll();
 
 }
+
+namespace Ini {
+
+    void Load(HMODULE module);
+    bool ApplyHeat(int level, bool racing);
+
+}
+
+template <typename State, int Count>
+class PerHelicopter {
+  public:
+    PerHelicopter() : mClock(0) {
+        for (int i = 0; i < Count; ++i) Clear(mSlots[i]);
+    }
+
+    State& Use(const void* owner) {
+        Slot* oldest = &mSlots[0];
+        for (int i = 0; i < Count; ++i) {
+            if (mSlots[i].owner == owner) return Touch(mSlots[i]);
+            if (mSlots[i].used < oldest->used) oldest = &mSlots[i];
+        }
+        oldest->owner = owner;
+        oldest->state = State();
+        return Touch(*oldest);
+    }
+
+    void Forget(const void* owner) {
+        for (int i = 0; i < Count; ++i)
+            if (mSlots[i].owner == owner) Clear(mSlots[i]);
+    }
+
+  private:
+    struct Slot {
+        const void* owner;
+        unsigned    used;
+        State       state;
+    };
+
+    static void Clear(Slot& slot) {
+        slot.owner = NULL;
+        slot.used = 0;
+        slot.state = State();
+    }
+
+    State& Touch(Slot& slot) {
+        slot.used = ++mClock;
+        return slot.state;
+    }
+
+    Slot     mSlots[Count];
+    unsigned mClock;
+};
 
 namespace UTL {
 namespace COM {
@@ -167,29 +205,49 @@ namespace UMath {
         Vector4 v0, v1, v2, v3;
     };
 
+    inline Vector3 Vector(float x, float y, float z) {
+        Vector3 v;
+        v.x = x;
+        v.y = y;
+        v.z = z;
+        return v;
+    }
+
     inline Vector3 operator+(const Vector3& a, const Vector3& b) {
-        return { a.x + b.x, a.y + b.y, a.z + b.z };
+        return Vector(a.x + b.x, a.y + b.y, a.z + b.z);
     }
 
     inline Vector3 operator-(const Vector3& a, const Vector3& b) {
-        return { a.x - b.x, a.y - b.y, a.z - b.z };
+        return Vector(a.x - b.x, a.y - b.y, a.z - b.z);
     }
 
     inline Vector3 operator*(const Vector3& v, float scale) {
-        return { v.x * scale, v.y * scale, v.z * scale };
+        return Vector(v.x * scale, v.y * scale, v.z * scale);
+    }
+
+    inline float Dot(const Vector3& a, const Vector3& b) {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    inline Vector3 Cross(const Vector3& a, const Vector3& b) {
+        return Vector(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    }
+
+    inline bool IsFinite(const Vector3& v) {
+        return Memory::IsFinite(v.x) && Memory::IsFinite(v.y) && Memory::IsFinite(v.z);
     }
 
     float Distancexz(const Vector3& a, const Vector3& b);
 
 }
 
-enum SimableType : int;
+typedef int SimableType;
 
 enum ePlayerList {
     PLAYER_ALL    = 0,
     PLAYER_LOCAL  = 1,
     PLAYER_REMOTE = 2,
-    PLAYER_MAX    = 3,
+    PLAYER_MAX    = 3
 };
 
 class IAttachableList;
@@ -203,7 +261,13 @@ namespace Attrib {
 }
 
 namespace Sim {
+
     class IEntity;
+
+    inline float GetTime() {
+        return ((FloatFunction)SIM_GET_TIME)();
+    }
+
 }
 
 class ISimable : public UTL::COM::IUnknown {
@@ -249,20 +313,16 @@ class IRigidBody : public UTL::COM::IUnknown {
     virtual void GetRightVector(UMath::Vector3& vec) const = 0;
     virtual void GetUpVector(UMath::Vector3& vec) const = 0;
 
-    static constexpr unsigned kGetDimension      = 0x48u;
-    static constexpr unsigned kSetPosition       = 0x5Cu;
-    static constexpr unsigned kSetLinearVelocity = 0x60u;
-
     void GetDimension(UMath::Vector3& dim) const {
-        Game::ThisCall<void>(Game::VirtualFunction(this, kGetDimension), this, &dim);
-    }
-
-    void SetPosition(const UMath::Vector3& pos) {
-        Game::ThisCall<void>(Game::VirtualFunction(this, kSetPosition), this, &pos);
+        ((PointerMethod)VirtualFunction(this, IRIGIDBODY_GET_DIMENSION))((void*)this, &dim);
     }
 
     void SetLinearVelocity(const UMath::Vector3& vel) {
-        Game::ThisCall<void>(Game::VirtualFunction(this, kSetLinearVelocity), this, &vel);
+        ((PointerMethod)VirtualFunction(this, IRIGIDBODY_SET_LINEAR_VELOCITY))(this, &vel);
+    }
+
+    void SetAngularVelocity(const UMath::Vector3& vel) {
+        ((PointerMethod)VirtualFunction(this, IRIGIDBODY_SET_ANGULAR_VELOCITY))(this, &vel);
     }
 };
 
@@ -275,32 +335,9 @@ class IPlayer : public UTL::COM::IUnknown {
 
 IRigidBody* GetLocalPlayerRigidBody();
 
-namespace Ini {
-
-    struct Setting {
-        const char* section;
-        Log::Name   name;
-        float*      number;
-        bool*       toggle;
-        float       min;
-        float       max;
-        bool        hasDefault;
-    };
-
-    void Load(void* module);
-    bool ApplyHeat(int level, bool racing);
-
-}
-
 class AIPerpVehicle {
   public:
-    static constexpr uintptr_t kSetHeat            = 0x00409060u;
-    static constexpr uint8_t   kSetHeatPrologue[7] = { 0x6A, 0xFF, 0x68, 0xBC, 0x79, 0x86, 0x00 };
-
-    static bool HookSetHeat() {
-        return Detour::Install("AIPerpVehicle::SetHeat", kSetHeat, kSetHeatPrologue, sizeof(kSetHeatPrologue), &SetHeatEntry);
-    }
-
+    static bool HookSetHeat();
     static void __cdecl SetHeatEntry(Detour::Registers* registers);
     static void UpdateHeat();
 
