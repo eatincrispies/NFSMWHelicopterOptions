@@ -1,7 +1,28 @@
 #pragma once
 #include "../../dllmain.hpp"
 
+#define WWORLDPOS_FIND_CLOSEST_FACE      0x00789190
+#define SIM_SURFACE_LOOKUP               0x006E95E0
+#define TRACK_PATH_MANAGER               0x009AA540
+
+#define ROAD_NETWORK_VALID               0x009B3828
+#define ROAD_NETWORK_NUM_SEGMENTS        0x009B3874
+#define ROAD_NETWORK_NUM_NODES           0x009B387C
+#define ROAD_NETWORK_NUM_PROFILES        0x009B3884
+#define ROAD_NETWORK_PROFILES            0x009B38B8
+#define ROAD_NETWORK_NODES               0x009B38BC
+#define ROAD_NETWORK_SEGMENTS            0x009B38C0
+
+#define ROAD_SEGMENT_NO_TRAFFIC          (1 << 1)
+#define ROAD_SEGMENT_CURVED              (1 << 8)
+#define ROAD_LANE_SCALE                  (100.0f / 8191.0f)
+#define ROAD_HANDLE_SCALE                (500.0f / (127.0f * 65535.0f))
+
 class AIActionHeliPursuit;
+class AIVehicleHelicopter;
+
+typedef bool        (__thiscall* FindClosestFaceMethod)(void* position, const UMath::Vector3* point, bool quitIfOnSameFace);
+typedef const void* (__cdecl* SurfaceLookupFunction)(const DWORD* nameHash);
 
 struct bVector2 {
     float x, y;
@@ -11,16 +32,27 @@ struct bVector3 {
     float x, y, z, w;
 };
 
+struct __declspec(align(16)) bMatrix4 {
+    float m[16];
+};
+
+inline bVector2 MakePoint(float x, float y) {
+    bVector2 point;
+    point.x = x;
+    point.y = y;
+    return point;
+}
+
 struct WRoadLane {
     float GetWidth() const {
-        return static_cast<float>(static_cast<int32_t>(nBits << 14) >> 18) * (100.0f / 8191.0f);
+        return (float)((int)(nBits << 14) >> 18) * ROAD_LANE_SCALE;
     }
 
     float GetOffset() const {
-        return static_cast<float>(static_cast<int32_t>(nBits) >> 18) * (100.0f / 8191.0f);
+        return (float)((int)nBits >> 18) * ROAD_LANE_SCALE;
     }
 
-    uint32_t nBits;
+    DWORD nBits;
 };
 
 struct WRoadProfile {
@@ -31,20 +63,22 @@ struct WRoadProfile {
 };
 
 struct WRoadSegment {
-    static constexpr unsigned short kRoadSegmentCurved = 1 << 8;
-
     bool IsCurved() const {
-        return (fFlags & kRoadSegmentCurved) != 0;
+        return (fFlags & ROAD_SEGMENT_CURVED) != 0;
+    }
+
+    bool IsTrafficAllowed() const {
+        return (fFlags & ROAD_SEGMENT_NO_TRAFFIC) == 0;
     }
 
     UMath::Vector3 GetStartControl() const {
-        const float scale = static_cast<float>(fStartHandleLength) * (500.0f / (127.0f * 65535.0f));
-        return { scale * vStartHandle[0], scale * vStartHandle[1], scale * vStartHandle[2] };
+        float scale = (float)fStartHandleLength * ROAD_HANDLE_SCALE;
+        return UMath::Vector(scale * vStartHandle[0], scale * vStartHandle[1], scale * vStartHandle[2]);
     }
 
     UMath::Vector3 GetEndControl() const {
-        const float scale = static_cast<float>(fEndHandleLength) * (500.0f / (127.0f * 65535.0f));
-        return { scale * vEndHandle[0], scale * vEndHandle[1], scale * vEndHandle[2] };
+        float scale = (float)fEndHandleLength * ROAD_HANDLE_SCALE;
+        return UMath::Vector(scale * vEndHandle[0], scale * vEndHandle[1], scale * vEndHandle[2]);
     }
 
     unsigned short fNodeIndex[2];
@@ -78,16 +112,16 @@ struct WCollisionTri {
 
 class WWorldPos {
   public:
-    static constexpr uintptr_t kFindClosestFace = 0x00789190u;
-
-    explicit WWorldPos(float yOffset) : fYOffset(yOffset) {}
+    explicit WWorldPos(float yOffset) : fFaceBits(0), fYOffset(yOffset), fSurface(NULL) {
+        memset(&fFace, 0, sizeof(fFace));
+    }
 
     bool FindClosestFace(const UMath::Vector3& pt, bool quitIfOnSameFace) {
-        return Game::ThisCall<bool>(kFindClosestFace, this, &pt, quitIfOnSameFace);
+        return ((FindClosestFaceMethod)WWORLDPOS_FIND_CLOSEST_FACE)(this, &pt, quitIfOnSameFace);
     }
 
     bool OnValidFace() const {
-        return (fFaceBits & 1u) != 0;
+        return (fFaceBits & 1) != 0;
     }
 
     const void* GetSurface() const {
@@ -96,57 +130,47 @@ class WWorldPos {
 
     float HeightAt(float x, float z) const;
 
-    WCollisionTri fFace = {};
-    unsigned int  fFaceBits = 0;
+    WCollisionTri fFace;
+    unsigned int  fFaceBits;
     float         fYOffset;
-    const void*   fSurface = nullptr;
+    const void*   fSurface;
 };
 
 class SimSurface {
   public:
-    static constexpr uintptr_t kLookup = 0x006E95E0u;
-
-    static const void* Lookup(uint32_t nameHash) {
-        return Game::Call<const void*>(kLookup, &nameHash);
+    static const void* Lookup(DWORD nameHash) {
+        return ((SurfaceLookupFunction)SIM_SURFACE_LOOKUP)(&nameHash);
     }
 };
 
 class WRoadNetwork {
   public:
-    static constexpr uintptr_t kfValid       = 0x009B3828u;
-    static constexpr uintptr_t kfNumSegments = 0x009B3874u;
-    static constexpr uintptr_t kfNumNodes    = 0x009B387Cu;
-    static constexpr uintptr_t kfNumProfiles = 0x009B3884u;
-    static constexpr uintptr_t kfProfiles    = 0x009B38B8u;
-    static constexpr uintptr_t kfNodes       = 0x009B38BCu;
-    static constexpr uintptr_t kfSegments    = 0x009B38C0u;
-
     static bool IsValid() {
-        return Game::Global<bool>(kfValid) && Game::Global<const WRoadSegment*>(kfSegments) != nullptr && Game::Global<const WRoadNode*>(kfNodes) != nullptr;
+        return *(const bool*)ROAD_NETWORK_VALID && Segments() != NULL && Nodes() != NULL;
     }
 
     static const WRoadSegment* Segments() {
-        return Game::Global<const WRoadSegment*>(kfSegments);
+        return *(const WRoadSegment* const*)ROAD_NETWORK_SEGMENTS;
     }
 
     static unsigned NumSegments() {
-        return Game::Global<unsigned>(kfNumSegments);
+        return *(const unsigned*)ROAD_NETWORK_NUM_SEGMENTS;
     }
 
     static const WRoadNode* Nodes() {
-        return Game::Global<const WRoadNode*>(kfNodes);
+        return *(const WRoadNode* const*)ROAD_NETWORK_NODES;
     }
 
     static unsigned NumNodes() {
-        return Game::Global<unsigned>(kfNumNodes);
+        return *(const unsigned*)ROAD_NETWORK_NUM_NODES;
     }
 
     static const WRoadProfile* Profiles() {
-        return Game::Global<const WRoadProfile*>(kfProfiles);
+        return *(const WRoadProfile* const*)ROAD_NETWORK_PROFILES;
     }
 
     static unsigned NumProfiles() {
-        return Game::Global<unsigned>(kfNumProfiles);
+        return *(const unsigned*)ROAD_NETWORK_NUM_PROFILES;
     }
 };
 
@@ -154,32 +178,34 @@ struct TrackPathZone {
     bool IsPointInside(const bVector2& point) const;
 
     const TrackPathZone* GetMemoryImageNext() const {
-        return reinterpret_cast<const TrackPathZone*>(reinterpret_cast<const char*>(this) + MemoryImageSize);
+        return (const TrackPathZone*)((const char*)this + MemoryImageSize);
     }
 
-    int      Type;
-    bVector2 Position;
-    bVector2 Direction;
-    float    Elevation;
-    int8_t   ZoneSource;
-    int8_t   CachedIndex;
-    int16_t  VisitInfo;
-    void*    pUserData;
-    bVector2 BBoxMin;
-    bVector2 BBoxMax;
-    int32_t  Data[4];
-    int16_t  NumPoints;
-    int16_t  MemoryImageSize;
-    bVector2 Points[64];
+    int         Type;
+    bVector2    Position;
+    bVector2    Direction;
+    float       Elevation;
+    signed char ZoneSource;
+    signed char CachedIndex;
+    short       VisitInfo;
+    void*       pUserData;
+    bVector2    BBoxMin;
+    bVector2    BBoxMax;
+    int         Data[4];
+    short       NumPoints;
+    short       MemoryImageSize;
+    bVector2    Points[64];
 };
 
 class TrackPathManager {
   public:
-    static constexpr uintptr_t kTheTrackPathManager           = 0x009AA540u;
-    static constexpr int       TRACK_PATH_ZONE_TUNNEL         = 3;
-    static constexpr int       TRACK_PATH_ZONE_OVERPASS       = 4;
-    static constexpr int       TRACK_PATH_ZONE_OVERPASS_SMALL = 5;
-    static constexpr int       NUM_TRACK_PATH_ZONES           = 15;
+    enum eTrackPathZoneType {
+        TRACK_PATH_ZONE_TUNNEL         = 3,
+        TRACK_PATH_ZONE_OVERPASS       = 4,
+        TRACK_PATH_ZONE_OVERPASS_SMALL = 5,
+        TRACK_PATH_ZONE_HIDDEN         = 8,
+        NUM_TRACK_PATH_ZONES           = 15
+    };
 
     struct ZoneInfo {
         int                  NumZones;
@@ -189,7 +215,7 @@ class TrackPathManager {
     };
 
     static const TrackPathManager& Get() {
-        return Game::Global<TrackPathManager>(kTheTrackPathManager);
+        return *(const TrackPathManager*)TRACK_PATH_MANAGER;
     }
 
     const TrackPathZone* FindCover(const bVector2& point, float height) const;
@@ -201,11 +227,6 @@ class TrackPathManager {
 };
 
 struct HeliSheetCoordinate {
-    static constexpr uintptr_t       kGetElevation              = 0x00754290u;
-    static constexpr Patch::CallSite kFilterHeliAltitude        = { 0x004099A6u, kGetElevation };
-    static constexpr Patch::CallSite kCheckHeliSheetSmoothing   = { 0x00417514u, kGetElevation };
-    static constexpr Patch::CallSite kCheckHeliSheetWorkingPos  = { 0x004175FCu, kGetElevation };
-
     static void InstallPatches();
 
     float GetElevation(const bVector2& point, bVector3* normalOut, bool* pointValid);
@@ -217,33 +238,23 @@ struct HeliSheetCoordinate {
 namespace HeliSheet {
 
     struct Settings {
-        bool  HeliSheet               = true;
-        float IgnoreHeliSheetDistance = 0.0f;
+        Settings();
+
+        bool  HeliSheet;
+        float IgnoreHeliSheetDistance;
     };
 
-    inline Settings sSettings;
-
-    inline const Ini::Setting kIniSettings[] = {
-        { "Helicopter:HeliSheet",               "HeliSheet",               nullptr,                            &sSettings.HeliSheet, 0.0f, 1.0f,    false },
-        { "Helicopter:IgnoreHeliSheetDistance", "IgnoreHeliSheetDistance", &sSettings.IgnoreHeliSheetDistance, nullptr,              0.0f, 2000.0f, false },
-    };
+    extern Settings sSettings;
 
     struct State {
-        bool farFromTarget = false;
-#if defined(_DEBUG)
-        bool loggedIgnore = false;
-        bool loggedReady = false;
-#endif
+        State() : farFromTarget(false) {}
+
+        bool farFromTarget;
     };
 
-    void Update(State& state, const UMath::Vector3& heliPosition, const AIActionHeliPursuit* pursuit);
+    void Update(State& state, const AIVehicleHelicopter& heli, const UMath::Vector3& heliPosition, const UMath::Vector3& heliVelocity,
+                const AIActionHeliPursuit* pursuit);
     bool GroundUnder(float x, float z, float top, float& groundY);
     bool UnderCover(const UMath::Vector3& point);
-
-#if defined(_DEBUG)
-    void LogLive(State& state, bool full);
-#else
-    inline void LogLive(State&, bool) {}
-#endif
 
 }

@@ -1,173 +1,236 @@
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
+#include <math.h>
 #include "AIActionHeliPursuit.hpp"
 #include "AIVehicleHelicopter.hpp"
+#include "HeliSheet.hpp"
 
 namespace {
 
-    constexpr uintptr_t kVTable = 0x00891358u;
+    #define HELI_PURSUIT_VTABLE              0x00891358
+    #define HELI_PURSUIT_CONSTRUCTOR         0x00420EC0
+    #define STRAIGHT_LINE_PURSUIT            0x00412770
+    #define SET_NEXT_PERP_SEARCH_DEST        0x00412F30
+    #define SEARCH_FOR_PERP                  0x00413090
+    #define SKID_HIT_PURSUIT                 0x00412B40
+    #define B_RANDOM                         0x0045DA30
+    #define GAME_SKID_KNOCK_TIME             8
 
-    constexpr float    kTwoPi                = 6.2831853f;
-    constexpr float    kSearchNextPointRange = 30.0f;
-    constexpr float    kSearchRadiusGrowth   = 40.0f;
-    constexpr float    kSearchRadiusJitter   = 0.25f;
-    constexpr float    kSearchSmallestStep   = 0.08f;
-    constexpr float    kSearchLargestStep    = 0.17f;
-    constexpr float    kSearchConeFirst      = 0.17f;
-    constexpr float    kSearchConeLargest    = 0.5f;
-    constexpr float    kSearchHeightNear     = 5.0f;
-    constexpr float    kSearchHeightFar      = 25.0f;
-    constexpr int      kPointsPerHover       = 3;
-    constexpr float    kHoverShortest        = 3.0f;
-    constexpr float    kHoverLongest         = 5.0f;
-    constexpr float    kHoverLookDrop        = 20.0f;
-    constexpr float    kLongestSearchStep    = 1.0f;
-    constexpr float    kGroundUnitRange      = 400.0f;
-    constexpr float    kGroundUnitSide       = 0.5f;
-    constexpr int      kMostGroundUnits      = 32;
-    constexpr int      kMostVisitedSpots     = 8;
-    constexpr int      kMostZonesScanned     = 4096;
-    constexpr float    kEscapeHeadingSpeed   = 5.0f;
-    constexpr float    kReverseSpeed         = 2.0f;
-    constexpr float    kFarSeek              = 300.0f;
-    constexpr float    kMidSeek              = 15.0f;
-    constexpr float    kNearSeek             = 3.0f;
-    constexpr float    kAheadReachSq         = 1600.0f;
-    constexpr float    kBehindReachSq        = 144.0f;
-    constexpr float    kLookSweepAngle       = 0.79f;
-    constexpr float    kLookSweepPeriod      = 10.0f;
-    constexpr float    kLookDistance         = 60.0f;
-    constexpr unsigned kSearchDrivingFlags   = 7u;
-    constexpr float    kStrikeLead           = 0.092f;
-    constexpr float    kStrikeCrossing       = 0.5f;
-    constexpr float    kSkidHitSide          = 6.0f;
-    constexpr float    kLineUpDistance       = 5.0f;
-    constexpr float    kStrikeHeight         = 0.45f;
-    constexpr float    kCoverLookAhead       = 0.5f;
-    constexpr float    kSkidHitNotYet        = -4.9f;
-    constexpr float    kSweepHeight          = 1.5f;
-    constexpr float    kStrikeReach          = 25.0f;
-    constexpr float    kContactOverlap       = 0.15f;
-    constexpr float    kBounceSide           = 6.0f;
-    constexpr float    kBounceHeight         = 3.0f;
-    constexpr float    kUnderCar             = -2.0f;
-    constexpr float    kStrikeHold           = 0.25f;
-    constexpr float    kLongestStrike        = 4.0f;
-    constexpr float    kAfterHit             = 0.3f;
-    constexpr float    kApproachLead         = 0.23f;
-    constexpr float    kGameStrikeStart      = 4.0f;
-    constexpr float    kStrikeStartPerSpeed  = 0.12f;
-    constexpr float    kSideClearance        = 1.9f;
-    constexpr float    kApproachPatience     = 2.0f;
-    constexpr float    kGameStrikeTime       = 2.0f;
-    constexpr uintptr_t kSoundAI_mInstance   = 0x00993CC8u;
-    constexpr unsigned kSoundAIHeli          = 0xE0u;
-    constexpr unsigned kIntentToRam          = 0xF8u;
-    constexpr uintptr_t kSim_GetTime         = 0x006E8DE0u;
-    constexpr float    kSquadTimeout         = 1.0f;
-    constexpr float    kTurnGap              = 2.0f;
-    constexpr float    kLeadPatience         = 15.0f;
-    constexpr float    kShortestLead         = 1.0f;
+    #define TRACKED_ACTIONS                  16
+    #define MOST_IN_SQUAD                    8
+    #define SQUAD_TIMEOUT_SECONDS            1
+    #define TURN_GAP_SECONDS                 2
+    #define LEAD_PATIENCE_SECONDS            15
 
-    constexpr int kTrackedActions = 16;
-    constexpr int kMostInSquad    = 8;
+    #define ESCAPE_HEADING_SPEED             5
+    #define REVERSE_SPEED                    2
+    #define AHEAD_REACH                      40
+    #define BEHIND_REACH                     12
+    #define FAR_SEEK                         300
+    #define MID_SEEK                         15
+    #define NEAR_SEEK                        3
+    #define SHORTEST_LEAD                    1
+    #define COVER_LOOK_AHEAD_MS              500
 
-    enum eTrackPathZoneType {
-        TRACK_PATH_ZONE_TUNNEL         = 3,
-        TRACK_PATH_ZONE_OVERPASS       = 4,
-        TRACK_PATH_ZONE_OVERPASS_SMALL = 5,
-        TRACK_PATH_ZONE_HIDDEN         = 8,
-    };
+    #define SKID_HIT_NOT_YET_MS              (-4900)
+    #define APPROACH_LEAD_MS                 230
+    #define APPROACH_PATIENCE_SECONDS        2
+    #define GAME_STRIKE_START                4
+    #define STRIKE_START_MS_PER_SPEED        120
+    #define GAME_STRIKE_SECONDS              2
+    #define SIDE_CLEARANCE_MM                1900
+    #define STRIKE_REACH                     25
+    #define UNDER_CAR                        (-2)
+    #define STRIKE_HOLD_MS                   250
+    #define LONGEST_STRIKE_SECONDS           4
+    #define STRIKE_LEAD_MS                   92
+    #define STRIKE_CROSSING_PERCENT          50
+    #define SKID_HIT_SIDE                    6
+    #define LINE_UP_DISTANCE                 5
+    #define STRIKE_HEIGHT_MM                 450
+    #define SWEEP_HEIGHT_MM                  1500
+    #define CONTACT_OVERLAP_MM               150
+    #define AFTER_HIT_MS                     300
+    #define BOUNCE_SIDE                      6
+    #define BOUNCE_HEIGHT                    3
 
-    constexpr eTrackPathZoneType kHidingZoneTypes[] = { TRACK_PATH_ZONE_HIDDEN, TRACK_PATH_ZONE_TUNNEL, TRACK_PATH_ZONE_OVERPASS,
-                                                        TRACK_PATH_ZONE_OVERPASS_SMALL };
+    #define PARKED_SPEED                     2
+    #define SKID_HIT_NEAREST                 5
+    #define SKID_HIT_FARTHEST                35
+    #define YDELT_FOR_SKID_KNOCK             13
+    #define TIME_BETWEEN_SKID_HIT_ATTEMPTS   5
+    #define STRATEGY_CHOICES                 2
 
-    constexpr uintptr_t kTheTrackPathManager    = 0x009AA540u;
-    constexpr unsigned  kZoneInfoTable          = 0x0Cu;
-    constexpr unsigned  kZoneInfoSize           = 0x4Cu;
-    constexpr unsigned  kZoneInfoNumZones       = 0x00u;
-    constexpr unsigned  kZoneInfoFirstZone      = 0x04u;
-    constexpr unsigned  kZoneInfoLastZone       = 0x08u;
-    constexpr unsigned  kZoneElevation          = 0x14u;
-    constexpr unsigned  kZoneBBoxMin            = 0x20u;
-    constexpr unsigned  kZoneMemoryImageSize    = 0x42u;
-    constexpr unsigned  kPursuitVehicles        = 0x18u;
-    constexpr unsigned  kPursuitNumVehicles     = 0x20u;
-    constexpr unsigned  kIVehicleGetPosition    = 0x0Cu;
+    #define IMPACT_SPEED_LOSS_PERCENT        100
+    #define IMPACT_KNOCK                     24
+    #define IMPACT_FLIP_DEGREES              720
+    #define SHORTEST_FLIP_AXIS_MM            1
 
-    static_assert(offsetof(AIActionHeliPursuit, mIVehicleAI) == 0x4C, "AIActionHeliPursuit::mIVehicleAI");
-    static_assert(offsetof(AIActionHeliPursuit, mIRigidBody) == 0x54, "AIActionHeliPursuit::mIRigidBody");
-    static_assert(offsetof(AIActionHeliPursuit, mIAIHelicopter) == 0x58, "AIActionHeliPursuit::mIAIHelicopter");
-    static_assert(offsetof(AIActionHeliPursuit, mPursuitTime) == 0x60, "AIActionHeliPursuit::mPursuitTime");
-    static_assert(offsetof(AIActionHeliPursuit, mSkidKnockTimer) == 0x64, "AIActionHeliPursuit::mSkidKnockTimer");
-    static_assert(offsetof(AIActionHeliPursuit, mPathTime) == 0x68, "AIActionHeliPursuit::mPathTime");
-    static_assert(offsetof(AIActionHeliPursuit, mBuildingPath) == 0x6C, "AIActionHeliPursuit::mBuildingPath");
-    static_assert(offsetof(AIActionHeliPursuit, mSearchPatternAngle) == 0x70, "AIActionHeliPursuit::mSearchPatternAngle");
-    static_assert(offsetof(AIActionHeliPursuit, mSearchDestPoint) == 0x74, "AIActionHeliPursuit::mSearchDestPoint");
-    static_assert(offsetof(AIActionHeliPursuit, mPlayerRigidBody) == 0x80, "AIActionHeliPursuit::mPlayerRigidBody");
-    static_assert(offsetof(AIActionHeliPursuit, mPlayerPosition) == 0x84, "AIActionHeliPursuit::mPlayerPosition");
-    static_assert(offsetof(AIActionHeliPursuit, mSkidHitOffset) == 0x90, "AIActionHeliPursuit::mSkidHitOffset");
-    static_assert(offsetof(AIActionHeliPursuit, mCollisionAbort) == 0x9C, "AIActionHeliPursuit::mCollisionAbort");
-    static_assert(offsetof(AIActionHeliPursuit, mPlayerSpeed) == 0xA0, "AIActionHeliPursuit::mPlayerSpeed");
-    static_assert(offsetof(AIActionHeliPursuit, mPursuitMode) == 0xA4, "AIActionHeliPursuit::mPursuitMode");
+    #define LONGEST_CLOCK_STEP_SECONDS       1
+    #define SEARCH_NEXT_POINT_RANGE          30
+    #define SEARCH_RADIUS_GROWTH             40
+    #define SEARCH_RADIUS_JITTER_PERCENT     25
+    #define SEARCH_SMALLEST_STEP_PERCENT     8
+    #define SEARCH_LARGEST_STEP_PERCENT      17
+    #define SEARCH_CONE_FIRST_PERCENT        17
+    #define SEARCH_CONE_LARGEST_PERCENT      50
+    #define SEARCH_HEIGHT_NEAR               5
+    #define SEARCH_HEIGHT_FAR                25
+    #define SEARCH_DRIVING_FLAGS             7
+    #define STARTING_SEARCH_RADIUS           80
+    #define STARTING_SEARCH_SPEED            15
+    #define POINTS_PER_HOVER                 3
+    #define HOVER_SHORTEST_SECONDS           3
+    #define HOVER_LONGEST_SECONDS            5
+    #define HOVER_LOOK_DROP                  20
+    #define NOT_HOVERING                     (-1)
+    #define LOOK_SWEEP_MILLIRADIANS          790
+    #define LOOK_SWEEP_PERIOD_SECONDS        10
+    #define LOOK_DISTANCE                    60
+    #define LOOKING_AT_DEST_MM               100
+    #define GROUND_UNIT_RANGE                400
+    #define GROUND_UNIT_SIDE_PERCENT         50
+    #define MOST_GROUND_UNITS                32
+    #define MOST_VISITED_SPOTS               8
+    #define MOST_ZONES_SCANNED               4096
+    #define HALF_TURN_PERCENT                50
+    #define COIN_FLIP_PERCENT                50
 
-    struct PursuitState {
-        float          searchRadius = 80.0f;
-        float          searchSpeed = 15.0f;
-        float          searchDirection = 1.0f;
-        float          searchLapTurned = 0.0f;
-        float          searchHeight = 5.0f;
-        float          searchClock = 0.0f;
-        float          lastPursuitTime = 0.0f;
-        float          strikeClock = 0.0f;
-        float          lastStrikeTime = 0.0f;
-        float          strikeStart = 0.0f;
-        bool           striking = false;
-        bool           strikeHit = false;
-        bool           sweeping = false;
-        bool           approaching = false;
-        bool           attacked = false;
-        float          approachStart = 0.0f;
-        int            pointsSinceHover = 0;
-        bool           hoverHere = false;
-        float          hoverStart = 0.0f;
-        float          hoverEnd = -1.0f;
-        float          hoverLookAngle = 0.0f;
-        UMath::Vector3 hoverPoint = {};
-        int            place = 0;
-#if defined(_DEBUG)
-        float          lastStrikeLog = 0.0f;
-        int            loggedMode = -1;
-#endif
-    };
+    #define RANDOM_SEED                      0x2545F491
+    #define RANDOM_MASK                      0xFFFFFF
+    #define RANDOM_RANGE                     16777216
+
+    #define RADIANS_PER_TURN                 6.2831853f
+    #define RADIANS_PER_DEGREE               0.017453292f
+
+    typedef int (__cdecl* RandomFunction)(int range);
+
+    const BYTE kConstructorCode[] = { 0x6A, 0xFF, 0x68, 0xF8, 0x7D, 0x86, 0x00 };
+
+    const Patch::FloatOperand kStraightLineLeadBase      = { 0x00412946, { 0xD8, 0x05 }, 0x00890614 };
+    const Patch::FloatOperand kStraightLineLeadMaxTest   = { 0x0041294C, { 0xD8, 0x15 }, 0x00890658 };
+    const Patch::FloatOperand kStraightLineLeadMaxClamp  = { 0x0041295B, { 0xD9, 0x05 }, 0x00890658 };
+    const Patch::FloatOperand kStraightLineClosingNear   = { 0x00412AA0, { 0xD9, 0x05 }, 0x00890560 };
+    const Patch::FloatOperand kStraightLineClosingMid    = { 0x00412A6E, { 0xD9, 0x05 }, 0x00890614 };
+    const Patch::FloatOperand kStraightLineClosingFar    = { 0x00412A87, { 0xD9, 0x05 }, 0x00890DD0 };
+    const Patch::FloatStore   kStraightLineSkidKnockTime = { 0x004128B2, { 0xC7, 0x46, 0x64 }, GAME_SKID_KNOCK_TIME };
+    const Patch::CallSite     kUpdateStraightLinePursuit = { 0x004278C0, STRAIGHT_LINE_PURSUIT };
+    const Patch::CallSite     kUpdateStartSearch         = { 0x00427881, SET_NEXT_PERP_SEARCH_DEST };
+    const Patch::CallSite     kUpdateSearchForPerp       = { 0x004278E6, SEARCH_FOR_PERP };
+    const Patch::CallSite     kUpdateSkidHitPursuit      = { 0x004278DB, SKID_HIT_PURSUIT };
 
     struct FormationSpot {
-        float side;
-        float back;
-        float up;
+        int side;
+        int back;
+        int up;
     };
 
-    constexpr FormationSpot kFormationSpots[] = { { 22.0f, 10.0f, 5.0f }, { -22.0f, 10.0f, 5.0f }, { 0.0f, 60.0f, 10.0f } };
-    constexpr int           kNumFormationSpots = static_cast<int>(sizeof(kFormationSpots) / sizeof(kFormationSpots[0]));
-    constexpr float         kSearchSpread[] = { 0.0f, 0.15f, -0.15f, 0.5f };
-    constexpr int           kNumSearchSpreads = static_cast<int>(sizeof(kSearchSpread) / sizeof(kSearchSpread[0]));
+    const FormationSpot kFormationSpots[] = { { 22, 10, 5 }, { -22, 10, 5 }, { 0, 60, 10 } };
+    const int           kSearchSpreadPercent[] = { 0, 15, -15, 50 };
+    const int           kHidingZoneTypes[] = {
+        TrackPathManager::TRACK_PATH_ZONE_HIDDEN,
+        TrackPathManager::TRACK_PATH_ZONE_TUNNEL,
+        TrackPathManager::TRACK_PATH_ZONE_OVERPASS,
+        TrackPathManager::TRACK_PATH_ZONE_OVERPASS_SMALL,
+    };
+
+    #define FORMATION_SPOTS                  ((int)(sizeof(kFormationSpots) / sizeof(kFormationSpots[0])))
+    #define SEARCH_SPREADS                   ((int)(sizeof(kSearchSpreadPercent) / sizeof(kSearchSpreadPercent[0])))
+    #define HIDING_ZONE_TYPES                ((int)(sizeof(kHidingZoneTypes) / sizeof(kHidingZoneTypes[0])))
+
+    C_ASSERT(offsetof(AIActionHeliPursuit, mIVehicleAI) == 0x4C);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mIRigidBody) == 0x54);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mIAIHelicopter) == 0x58);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPursuitTime) == 0x60);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mSkidKnockTimer) == 0x64);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPathTime) == 0x68);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mBuildingPath) == 0x6C);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mSearchPatternAngle) == 0x70);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mSearchDestPoint) == 0x74);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPlayerRigidBody) == 0x80);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPlayerPosition) == 0x84);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mSkidHitOffset) == 0x90);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mCollisionAbort) == 0x9C);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPlayerSpeed) == 0xA0);
+    C_ASSERT(offsetof(AIActionHeliPursuit, mPursuitMode) == 0xA4);
+
+    struct LeadDistance {
+        float base;
+        float max;
+    };
+
+    struct ClosingSpeed {
+        float nearSpeed;
+        float midSpeed;
+        float farSpeed;
+    };
+
+    struct PursuitState {
+        PursuitState()
+            : place(0),
+              attacked(false),
+              approaching(false),
+              approachStart(0),
+              striking(false),
+              strikeHit(false),
+              sweeping(false),
+              strikeStart(0),
+              strikeClock(0),
+              lastStrikeTime(0),
+              searchRadius(STARTING_SEARCH_RADIUS),
+              searchSpeed(STARTING_SEARCH_SPEED),
+              searchDirection(1),
+              searchLapTurned(0),
+              searchHeight(SEARCH_HEIGHT_NEAR),
+              searchClock(0),
+              lastPursuitTime(0),
+              pointsSinceHover(0),
+              hoverHere(false),
+              hoverStart(0),
+              hoverEnd(NOT_HOVERING),
+              hoverLookAngle(0) {
+            hoverPoint = UMath::Vector(0, 0, 0);
+        }
+
+        int            place;
+        bool           attacked;
+        bool           approaching;
+        float          approachStart;
+        bool           striking;
+        bool           strikeHit;
+        bool           sweeping;
+        float          strikeStart;
+        float          strikeClock;
+        float          lastStrikeTime;
+        float          searchRadius;
+        float          searchSpeed;
+        float          searchDirection;
+        float          searchLapTurned;
+        float          searchHeight;
+        float          searchClock;
+        float          lastPursuitTime;
+        int            pointsSinceHover;
+        bool           hoverHere;
+        float          hoverStart;
+        float          hoverEnd;
+        float          hoverLookAngle;
+        UMath::Vector3 hoverPoint;
+    };
 
     class Squad {
       public:
+        Squad() : mCount(0), mLeadSince(0) {}
+
         int Join(const AIActionHeliPursuit* action, float now) {
             Prune(now);
-            const int place = Place(action);
+            int place = Place(action);
             if (place >= 0) {
                 mMembers[place].seen = now;
                 return place;
             }
-            if (mCount == kMostInSquad) return kMostInSquad - 1;
+            if (mCount == MOST_IN_SQUAD) return MOST_IN_SQUAD - 1;
             if (mCount == 0) mLeadSince = now;
-            mMembers[mCount++] = { action, now };
-            Log::Info("AIActionHeliPursuit 0x%p  joined the squad at place %d of %d", action, mCount - 1, mCount);
-            return mCount - 1;
+            mMembers[mCount].action = action;
+            mMembers[mCount].seen = now;
+            return mCount++;
         }
 
         int Place(const AIActionHeliPursuit* action) const {
@@ -177,18 +240,17 @@ namespace {
         }
 
         void SendToBack(const AIActionHeliPursuit* action, float now) {
-            const int place = Place(action);
+            int place = Place(action);
             if (place < 0 || place == mCount - 1) return;
-            const Member member = mMembers[place];
+            Member member = mMembers[place];
             for (int i = place; i + 1 < mCount; ++i) mMembers[i] = mMembers[i + 1];
             mMembers[mCount - 1] = member;
             if (place == 0) mLeadSince = now;
-            Log::Info("AIActionHeliPursuit 0x%p  moved from place %d to the back of the squad, 0x%p leads now", action, place, mMembers[0].action);
         }
 
         bool MayAttack(const AIActionHeliPursuit* action, float now) const {
             if (mCount <= 1) return true;
-            return mMembers[0].action == action && now >= mLeadSince && now - mLeadSince >= kTurnGap;
+            return mMembers[0].action == action && now >= mLeadSince && now - mLeadSince >= TURN_GAP_SECONDS;
         }
 
         int Size() const {
@@ -204,334 +266,245 @@ namespace {
         void Prune(float now) {
             int kept = 0;
             for (int i = 0; i < mCount; ++i) {
-                if (now >= mMembers[i].seen && now - mMembers[i].seen <= kSquadTimeout) {
+                if (now >= mMembers[i].seen && now - mMembers[i].seen <= SQUAD_TIMEOUT_SECONDS) {
                     mMembers[kept++] = mMembers[i];
                     continue;
                 }
                 if (kept == 0) mLeadSince = now;
-                Log::Info("AIActionHeliPursuit 0x%p  left the squad from place %d", mMembers[i].action, i);
             }
             mCount = kept;
         }
 
-        Member mMembers[kMostInSquad] = {};
-        int    mCount = 0;
-        float  mLeadSince = 0.0f;
+        Member mMembers[MOST_IN_SQUAD];
+        int    mCount;
+        float  mLeadSince;
     };
 
-    AIActionHeliPursuit*                         gConstructed[kTrackedActions] = {};
-    int                                          gNextConstructed = 0;
-    PerHelicopter<PursuitState, kTrackedActions> gPursuits;
+    LeadDistance                                 gLeadDistance;
+    ClosingSpeed                                 gClosingSpeed;
+    bool                                         gSkidKnockPatched = false;
+    float                                        gSkidKnockTime    = 0;
+    AIActionHeliPursuit*                         gConstructed[TRACKED_ACTIONS];
+    int                                          gNextConstructed  = 0;
+    PerHelicopter<PursuitState, TRACKED_ACTIONS> gPursuits;
     PursuitState                                 gUnknownHelicopter;
-    PursuitState*                                gHeli = &gUnknownHelicopter;
+    PursuitState*                                gHeli             = &gUnknownHelicopter;
     Squad                                        gSquad;
-    float                                        gEscapeHeadingX = 0.0f;
-    float                                        gEscapeHeadingZ = 0.0f;
-    bool                                         gPerpCovered = false;
-    uintptr_t                                    gVisitedSpots[kMostVisitedSpots] = {};
-    int                                          gNextVisitedSpot = 0;
-    float                                        gLastSearchTime = -1.0f;
-    uint32_t                                     gRandomState = 0x2545F491u;
+    float                                        gEscapeHeadingX   = 0;
+    float                                        gEscapeHeadingZ   = 0;
+    float                                        gLastSearchTime   = -1;
+    const TrackPathZone*                         gVisitedSpots[MOST_VISITED_SPOTS];
+    int                                          gNextVisitedSpot  = 0;
+    DWORD                                        gRandomState      = RANDOM_SEED;
 
-    float SimTime() {
-        return Game::Call<float>(kSim_GetTime);
-    }
+    int            bRandom(int range);
+    bool           IsAlive(const AIActionHeliPursuit* action, const IRigidBody* heliRigidBody);
+    int            JoinSquad(const AIActionHeliPursuit* action, float now);
+    void           AdvanceClock(float& clock, float& lastTime, float pursuitTime);
+    float          RandomUnit();
+    float          RandomRange(float low, float high);
+    bool           Chance(int percent);
+    float          Lerp(float from, float to, float t);
+    float          WrapTurn(float turn);
+    float          Radians(int milliradians);
+    float          SearchProgress();
+    bool           WasVisited(const TrackPathZone* zone);
+    void           MarkVisited(const TrackPathZone* zone);
+    bool           FindHidingSpot(const UMath::Vector3& lastKnown, float radius, const UMath::Vector3& myPosition, UMath::Vector3& spot);
+    bool           GroundUnitsDirection(IPursuit* ip, const IVehicle* heli, const UMath::Vector3& lastKnown, float& x, float& z);
+    UMath::Vector3 MetresOf(const short* millimetres);
 
-    int JoinSquad(const AIActionHeliPursuit* action, float now) {
-        gHeli = &gPursuits.Use(action);
-        gHeli->place = gSquad.Join(action, now);
-        return gHeli->place;
-    }
+}
 
-#if defined(_DEBUG)
-    const char* PursuitModeName(int mode) {
-        switch (mode) {
-        case AIActionHeliPursuit::kStraight_Line: return "kStraight_Line";
-        case AIActionHeliPursuit::kSearch_Pattern: return "kSearch_Pattern";
-        case AIActionHeliPursuit::kSkid_Hit_Approach: return "kSkid_Hit_Approach";
-        case AIActionHeliPursuit::kSkid_Hit_Strike: return "kSkid_Hit_Strike";
-        default: return "-";
-        }
-    }
-#endif
+AIActionHeliPursuit::Settings AIActionHeliPursuit::sSettings;
 
-    float RandomUnit() {
-        gRandomState ^= gRandomState << 13;
-        gRandomState ^= gRandomState >> 17;
-        gRandomState ^= gRandomState << 5;
-        return static_cast<float>(gRandomState & 0xFFFFFFu) / 16777216.0f;
-    }
+AIActionHeliPursuit::Settings::Settings()
+    : LeadBase(30.0f),
+      LeadMax(45.0f),
+      AttackDuration(8.0f),
+      ClosingSpeedNear(20.0f),
+      ClosingSpeedMid(30.0f),
+      ClosingSpeedFar(50.0f),
+      SearchSpeedMin(15.0f),
+      SearchSpeedMax(20.0f),
+      SearchRadiusFirst(80.0f),
+      SearchRadiusLargest(250.0f) {
+}
 
-    float RandomRange(float low, float high) {
-        return low + (high - low) * RandomUnit();
-    }
+void AIActionHeliPursuit::InstallPatches() {
+    Refresh();
 
-    float Lerp(float from, float to, float t) {
-        return from + (to - from) * t;
-    }
+    Patch::Begin();
+    Patch::RedirectFloat(kStraightLineLeadBase, &gLeadDistance.base);
+    Patch::RedirectFloat(kStraightLineLeadMaxTest, &gLeadDistance.max);
+    Patch::RedirectFloat(kStraightLineLeadMaxClamp, &gLeadDistance.max);
+    Patch::Commit();
 
-    float WrapTurn(float turn) {
-        turn -= std::floor(turn);
-        return turn;
-    }
+    Patch::Begin();
+    Patch::RedirectFloat(kStraightLineClosingNear, &gClosingSpeed.nearSpeed);
+    Patch::RedirectFloat(kStraightLineClosingMid, &gClosingSpeed.midSpeed);
+    Patch::RedirectFloat(kStraightLineClosingFar, &gClosingSpeed.farSpeed);
+    Patch::Commit();
 
-    float SearchProgress() {
-        const float span = AIActionHeliPursuit::sSettings.SearchRadiusLargest - AIActionHeliPursuit::sSettings.SearchRadiusFirst;
-        if (span <= 0.0f) return 1.0f;
-        return std::clamp((gHeli->searchRadius - AIActionHeliPursuit::sSettings.SearchRadiusFirst) / span, 0.0f, 1.0f);
-    }
+    Patch::Begin();
+    Patch::StoreFloat(kStraightLineSkidKnockTime, sSettings.AttackDuration);
+    gSkidKnockPatched = Patch::Commit();
+    gSkidKnockTime = sSettings.AttackDuration;
 
-    void AdvanceSearchClock(float pursuitTime) {
-        float dT = pursuitTime - gHeli->lastPursuitTime;
-        if (dT < 0.0f) dT = pursuitTime;
-        if (dT < 0.0f || dT > kLongestSearchStep) dT = 0.0f;
-        gHeli->searchClock += dT;
-        gHeli->lastPursuitTime = pursuitTime;
-    }
+    Patch::Begin();
+    Patch::RedirectCall(kUpdateStraightLinePursuit, MethodAddress(&AIActionHeliPursuit::ChasePerp));
+    Patch::RedirectCall(kUpdateStartSearch, MethodAddress(&AIActionHeliPursuit::StartSearch));
+    Patch::RedirectCall(kUpdateSearchForPerp, MethodAddress(&AIActionHeliPursuit::SearchForPerp));
+    Patch::Commit();
 
-    float Dot(const UMath::Vector3& a, const UMath::Vector3& b) {
-        return a.x * b.x + a.y * b.y + a.z * b.z;
-    }
+    Patch::Begin();
+    Patch::RedirectCall(kUpdateSkidHitPursuit, MethodAddress(&AIActionHeliPursuit::StrikePerp));
+    Patch::Commit();
+}
 
-    void AdvanceStrikeClock(float pursuitTime) {
-        float dT = pursuitTime - gHeli->lastStrikeTime;
-        if (dT < 0.0f) dT = pursuitTime;
-        if (dT < 0.0f || dT > kLongestSearchStep) dT = 0.0f;
-        gHeli->strikeClock += dT;
-        gHeli->lastStrikeTime = pursuitTime;
-    }
-
-    bool WasVisited(uintptr_t zone) {
-        for (uintptr_t visited : gVisitedSpots)
-            if (visited == zone) return true;
-        return false;
-    }
-
-    void MarkVisited(uintptr_t zone) {
-        gVisitedSpots[gNextVisitedSpot] = zone;
-        gNextVisitedSpot = (gNextVisitedSpot + 1) % kMostVisitedSpots;
-    }
-
-    bool FindHidingSpot(const UMath::Vector3& lastKnown, float radius, const UMath::Vector3& myPosition, UMath::Vector3& spot) {
-        uintptr_t best = 0;
-        float     bestDistance = 0.0f;
-        for (eTrackPathZoneType type : kHidingZoneTypes) {
-            const uintptr_t info = kTheTrackPathManager + kZoneInfoTable + kZoneInfoSize * static_cast<unsigned>(type);
-            int       numZones = 0;
-            uintptr_t zone = 0;
-            uintptr_t last = 0;
-            if (!Memory::Read(info + kZoneInfoNumZones, &numZones, sizeof(numZones)) || numZones <= 0
-                || !Memory::Read(info + kZoneInfoFirstZone, &zone, sizeof(zone)) || !Memory::Read(info + kZoneInfoLastZone, &last, sizeof(last)))
-                continue;
-            for (int scanned = 0; zone != 0 && zone < last && scanned < kMostZonesScanned; ++scanned) {
-                int     zoneType = 0;
-                float   box[4] = {};
-                float   elevation = 0.0f;
-                int16_t size = 0;
-                if (!Memory::Read(zone, &zoneType, sizeof(zoneType)) || !Memory::Read(zone + kZoneBBoxMin, box, sizeof(box))
-                    || !Memory::Read(zone + kZoneElevation, &elevation, sizeof(elevation))
-                    || !Memory::Read(zone + kZoneMemoryImageSize, &size, sizeof(size)) || size <= 0)
-                    break;
-                if (zoneType != type) {
-                    zone += static_cast<uintptr_t>(size);
-                    continue;
-                }
-                const UMath::Vector3 centre = { -(box[1] + box[3]) * 0.5f, elevation != 0.0f ? elevation : lastKnown.y, (box[0] + box[2]) * 0.5f };
-                const float distance = UMath::Distancexz(centre, myPosition);
-                if (UMath::Distancexz(centre, lastKnown) <= radius && !WasVisited(zone) && (best == 0 || distance < bestDistance)) {
-                    best = zone;
-                    bestDistance = distance;
-                    spot = centre;
-                }
-                zone += static_cast<uintptr_t>(size);
-            }
-        }
-        if (best == 0) return false;
-        MarkVisited(best);
-        return true;
-    }
-
-    bool GroundUnitsDirection(IPursuit* ip, const IVehicle* heli, const UMath::Vector3& lastKnown, float& x, float& z) {
-        uintptr_t vehicles = 0;
-        int       count = 0;
-        const uintptr_t pursuit = reinterpret_cast<uintptr_t>(ip);
-        if (!Memory::Read(pursuit + kPursuitVehicles, &vehicles, sizeof(vehicles)) || !Memory::Read(pursuit + kPursuitNumVehicles, &count, sizeof(count))
-            || vehicles == 0 || count <= 0 || count > kMostGroundUnits)
-            return false;
-        float sumX = 0.0f;
-        float sumZ = 0.0f;
-        int   used = 0;
-        for (int i = 0; i < count; ++i) {
-            uintptr_t vehicle = 0;
-            if (!Memory::Read(vehicles + i * sizeof(uintptr_t), &vehicle, sizeof(vehicle)) || vehicle == 0
-                || vehicle == reinterpret_cast<uintptr_t>(heli))
-                continue;
-            const UMath::Vector3* position =
-                Game::ThisCall<const UMath::Vector3*>(Game::VirtualFunction(reinterpret_cast<const void*>(vehicle), kIVehicleGetPosition), vehicle);
-            if (position == nullptr || UMath::Distancexz(*position, lastKnown) > kGroundUnitRange) continue;
-            sumX += position->x - lastKnown.x;
-            sumZ += position->z - lastKnown.z;
-            ++used;
-        }
-        const float length = std::sqrt(sumX * sumX + sumZ * sumZ);
-        if (used == 0 || length < 1.0f) return false;
-        x = sumX / length;
-        z = sumZ / length;
-        return true;
-    }
-
-    bool IsAlive(const AIActionHeliPursuit* action, const IRigidBody* heliRigidBody) {
-        uintptr_t vtable = 0;
-        const IRigidBody* rigidBody = nullptr;
-        const uintptr_t va = reinterpret_cast<uintptr_t>(action);
-        return action && Memory::Read(va, &vtable, sizeof(vtable)) && vtable == kVTable
-            && Memory::Read(va + offsetof(AIActionHeliPursuit, mIRigidBody), &rigidBody, sizeof(rigidBody)) && rigidBody == heliRigidBody;
-    }
-
+bool AIActionHeliPursuit::HookConstructor() {
+    return Detour::Install(HELI_PURSUIT_CONSTRUCTOR, kConstructorCode, sizeof(kConstructorCode), &ConstructorEntry);
 }
 
 void AIActionHeliPursuit::Refresh() {
-    if (sSettings.LeadBase > sSettings.LeadMax)
-        Log::Warn("[Helicopter:Leading] LeadBase=%g > LeadMax=%g  leadDist pinned at %g", sSettings.LeadBase, sSettings.LeadMax, sSettings.LeadMax);
+    if (sSettings.SearchSpeedMin > sSettings.SearchSpeedMax) sSettings.SearchSpeedMin = sSettings.SearchSpeedMax;
+    if (sSettings.SearchRadiusFirst > sSettings.SearchRadiusLargest) sSettings.SearchRadiusFirst = sSettings.SearchRadiusLargest;
 
-    if (sSettings.SearchSpeedMin > sSettings.SearchSpeedMax) {
-        Log::Warn("[Helicopter:SearchSpeed] SearchSpeedMin=%g > SearchSpeedMax=%g  -> %g", sSettings.SearchSpeedMin, sSettings.SearchSpeedMax,
-                  sSettings.SearchSpeedMax);
-        sSettings.SearchSpeedMin = sSettings.SearchSpeedMax;
-    }
-    if (sSettings.SearchRadiusFirst > sSettings.SearchRadiusLargest) {
-        Log::Warn("[Helicopter:SearchRadius] SearchRadiusFirst=%g > SearchRadiusLargest=%g  -> %g", sSettings.SearchRadiusFirst,
-                  sSettings.SearchRadiusLargest, sSettings.SearchRadiusLargest);
-        sSettings.SearchRadiusFirst = sSettings.SearchRadiusLargest;
-    }
+    gLeadDistance.base = sSettings.LeadBase;
+    gLeadDistance.max = sSettings.LeadMax;
+    gClosingSpeed.nearSpeed = sSettings.ClosingSpeedNear;
+    gClosingSpeed.midSpeed = sSettings.ClosingSpeedMid;
+    gClosingSpeed.farSpeed = sSettings.ClosingSpeedFar;
 
-    sLeadDistance.base = sSettings.LeadBase;
-    sLeadDistance.max  = sSettings.LeadMax;
-    sClosingSpeed.nearSpeed = sSettings.ClosingSpeedNear;
-    sClosingSpeed.midSpeed  = sSettings.ClosingSpeedMid;
-    sClosingSpeed.farSpeed  = sSettings.ClosingSpeedFar;
-    Log::Info("AIActionHeliPursuit  sClosingSpeed@0x%p near=%g mid=%g far=%g", &sClosingSpeed, sClosingSpeed.nearSpeed, sClosingSpeed.midSpeed,
-              sClosingSpeed.farSpeed);
-
-    if (sSkidKnockPatched && sSettings.AttackDuration != sSkidKnockTime) {
-        if (Patch::RewriteStoredFloat("AIActionHeliPursuit::StraightLinePursuit | mSkidKnockTimer = kSkidKnockTime", kStraightLineSkidKnockTime,
-                                      sSkidKnockTime, sSettings.AttackDuration))
-            sSkidKnockTime = sSettings.AttackDuration;
-        else
-            sSkidKnockPatched = false;
+    if (!gSkidKnockPatched || sSettings.AttackDuration == gSkidKnockTime) return;
+    if (!Patch::RewriteStoredFloat(kStraightLineSkidKnockTime, gSkidKnockTime, sSettings.AttackDuration)) {
+        gSkidKnockPatched = false;
+        return;
     }
-    Log::Info("AIActionHeliPursuit  sLeadDistance@0x%p base=%g max=%g", &sLeadDistance, sLeadDistance.base, sLeadDistance.max);
+    gSkidKnockTime = sSettings.AttackDuration;
 }
 
 void __cdecl AIActionHeliPursuit::ConstructorEntry(Detour::Registers* registers) {
-    auto* action = reinterpret_cast<AIActionHeliPursuit*>(static_cast<uintptr_t>(registers->ecx));
-    if (!action) return;
+    AIActionHeliPursuit* action = (AIActionHeliPursuit*)registers->ecx;
+    if (action == NULL) return;
     gPursuits.Forget(action);
-    for (const AIActionHeliPursuit* known : gConstructed)
-        if (known == action) return;
+    for (int i = 0; i < TRACKED_ACTIONS; ++i)
+        if (gConstructed[i] == action) return;
     gConstructed[gNextConstructed] = action;
-    Log::Info("AIActionHeliPursuit::AIActionHeliPursuit  ecx=0x%08X gConstructed[%d]", registers->ecx, gNextConstructed);
-    gNextConstructed = (gNextConstructed + 1) % kTrackedActions;
+    gNextConstructed = (gNextConstructed + 1) % TRACKED_ACTIONS;
 }
 
 AIActionHeliPursuit* AIActionHeliPursuit::Find(const IRigidBody* heliRigidBody) {
-    for (AIActionHeliPursuit* action : gConstructed)
-        if (IsAlive(action, heliRigidBody)) return action;
-    return nullptr;
+    for (int i = 0; i < TRACKED_ACTIONS; ++i)
+        if (IsAlive(gConstructed[i], heliRigidBody)) return gConstructed[i];
+    return NULL;
 }
 
 void AIActionHeliPursuit::StraightLinePursuit() {
-    Game::ThisCall<void>(kStraightLinePursuit, this);
+    ((VoidMethod)STRAIGHT_LINE_PURSUIT)(this);
 }
 
-void AIActionHeliPursuit::SkidHitPursuit() {
-    Game::ThisCall<void>(kSkidHitPursuit, this);
-}
-
-bool AIActionHeliPursuit::CanKeepDiving() const {
-    if (mPursuitMode != kSkid_Hit_Strike || gHeli->strikeHit || mPlayerRigidBody == nullptr || mIRigidBody == nullptr) return false;
-    if (gHeli->strikeClock - gHeli->strikeStart >= kLongestStrike) return false;
-    const UMath::Vector3 heli = mIRigidBody->GetPosition();
-    const UMath::Vector3 car = mPlayerRigidBody->GetPosition();
-    const UMath::Vector3 apart = heli - car;
-    return apart.y > kUnderCar && apart.x * apart.x + apart.y * apart.y + apart.z * apart.z <= kStrikeReach * kStrikeReach;
-}
-
-bool AIActionHeliPursuit::IsPerpReversing() const {
-    if (mPlayerRigidBody == nullptr) return false;
+void AIActionHeliPursuit::ChasePerp() {
+    float now = Sim::GetTime();
+    int joined = JoinSquad(this, now);
+    if (gHeli->attacked) {
+        gHeli->attacked = false;
+        gSquad.SendToBack(this, now);
+    } else if (joined == 0 && gSquad.Size() > 1 && mSkidKnockTimer < -LEAD_PATIENCE_SECONDS) {
+        gSquad.SendToBack(this, now);
+    }
+    int place = gHeli->place = gSquad.Place(this);
+    bool covered = IsPerpUnderCover();
+    if ((covered || !gSquad.MayAttack(this, now)) && mSkidKnockTimer < Seconds(SKID_HIT_NOT_YET_MS)) mSkidKnockTimer = Seconds(SKID_HIT_NOT_YET_MS);
+    StraightLinePursuit();
+    if (mPursuitMode == kStraight_Line && ShouldAttackParkedPerp()) AttackParkedPerp();
+    if (IsSkidHitting()) gHeli->attacked = true;
+    if (mPlayerRigidBody == NULL) return;
     const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
-    if (perpLinVel.x * perpLinVel.x + perpLinVel.z * perpLinVel.z < kReverseSpeed * kReverseSpeed) return false;
-    UMath::Vector3 forward = {};
-    mPlayerRigidBody->GetForwardVector(forward);
-    return perpLinVel.x * forward.x + perpLinVel.z * forward.z < 0.0f;
-}
-
-bool AIActionHeliPursuit::KeepsUpWhileReversing() const {
-    if (mIRigidBody == nullptr || !IsPerpReversing()) return false;
-    const UMath::Vector3  car = mPlayerRigidBody->GetPosition();
-    const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
-    const UMath::Vector3  heli = mIRigidBody->GetPosition();
-    const UMath::Vector3  apart = heli - car;
-    const float distanceSq = apart.x * apart.x + apart.y * apart.y + apart.z * apart.z;
-    if (apart.x * perpLinVel.x + apart.z * perpLinVel.z > 0.0f) return distanceSq <= kAheadReachSq && heli.y >= car.y;
-    return distanceSq <= kBehindReachSq;
-}
-
-bool AIActionHeliPursuit::ShouldStrikeNow() const {
-    if (mPlayerRigidBody == nullptr || mIRigidBody == nullptr) return false;
-    const UMath::Vector3  car = mPlayerRigidBody->GetPosition();
-    const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
-    const UMath::Vector3  heli = mIRigidBody->GetPosition();
-    UMath::Vector3 right = {};
-    mPlayerRigidBody->GetRightVector(right);
-    const UMath::Vector3 apart = heli - car;
-    if (std::fabs(apart.x * right.x + apart.y * right.y + apart.z * right.z) <= kSideClearance) return false;
-
-    const UMath::Vector3 lineUp = car + carVelocity * kApproachLead + mSkidHitOffset;
-    const float speed = std::sqrt(carVelocity.x * carVelocity.x + carVelocity.z * carVelocity.z);
-    if (UMath::Distancexz(heli, lineUp) <= std::max(kGameStrikeStart, speed * kStrikeStartPerSpeed)) return true;
-    return gHeli->strikeClock - gHeli->approachStart >= kApproachPatience && apart.x * apart.x + apart.y * apart.y + apart.z * apart.z <= kStrikeReach * kStrikeReach;
-}
-
-void AIActionHeliPursuit::BeginStrike() {
-    Log::Info("AIActionHeliPursuit 0x%p  strike started by the mod %.2fs into the approach  mSkidKnockTimer[+0x64]=%.2f", this,
-              gHeli->strikeClock - gHeli->approachStart, mSkidKnockTimer);
-    mPursuitMode = kSkid_Hit_Strike;
-    if (mSkidKnockTimer < kGameStrikeTime) mSkidKnockTimer = kGameStrikeTime;
-    gHeli->approaching = false;
-    void* soundAI = Game::Global<void*>(kSoundAI_mInstance);
-    void* speaker = soundAI != nullptr ? *reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(soundAI) + kSoundAIHeli) : nullptr;
-    if (speaker != nullptr) Game::ThisCall<void>(Game::VirtualFunction(speaker, kIntentToRam), speaker);
+    float speed = sqrtf(perpLinVel.x * perpLinVel.x + perpLinVel.z * perpLinVel.z);
+    if (mPursuitMode == kStraight_Line && IsPerpReversing()) LeadReversing(perpLinVel, speed);
+    if (mPursuitMode == kStraight_Line) HoldFormationSpot(place, perpLinVel);
+    if (speed < ESCAPE_HEADING_SPEED) return;
+    gEscapeHeadingX = perpLinVel.x / speed;
+    gEscapeHeadingZ = perpLinVel.z / speed;
 }
 
 bool AIActionHeliPursuit::IsPerpUnderCover() const {
-    if (mPlayerRigidBody == nullptr) return false;
-    const UMath::Vector3  car = mPlayerRigidBody->GetPosition();
+    if (mPlayerRigidBody == NULL) return false;
+    UMath::Vector3 car = mPlayerRigidBody->GetPosition();
     const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
-    const bool covered = HeliSheet::UnderCover(car) || HeliSheet::UnderCover(car + carVelocity * kCoverLookAhead);
-    if (covered != gPerpCovered) {
-        gPerpCovered = covered;
-        Log::Info("AIActionHeliPursuit 0x%p  perp %s a tunnel/overpass zone at (%.1f, %.1f, %.1f), new skid hits %s", this, covered ? "under" : "out of", car.x,
-                  car.y, car.z, covered ? "held back" : "allowed");
-    }
-    return covered;
+    return HeliSheet::UnderCover(car) || HeliSheet::UnderCover(car + carVelocity * Seconds(COVER_LOOK_AHEAD_MS));
+}
+
+bool AIActionHeliPursuit::IsPerpReversing() const {
+    if (mPlayerRigidBody == NULL) return false;
+    const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
+    if (perpLinVel.x * perpLinVel.x + perpLinVel.z * perpLinVel.z < REVERSE_SPEED * REVERSE_SPEED) return false;
+    UMath::Vector3 forward = UMath::Vector(0, 0, 0);
+    mPlayerRigidBody->GetForwardVector(forward);
+    return perpLinVel.x * forward.x + perpLinVel.z * forward.z < 0;
+}
+
+void AIActionHeliPursuit::LeadReversing(const UMath::Vector3& perpLinVel, float speed) {
+    UMath::Vector3 player = mPlayerRigidBody->GetPosition();
+    UMath::Vector3 seek = mIVehicleAI->GetDriveTarget();
+    float lead = UMath::Distancexz(seek, player);
+    seek.x = player.x + perpLinVel.x / speed * lead;
+    seek.z = player.z + perpLinVel.z / speed * lead;
+    ChaseToward(seek, perpLinVel);
+    mIAIHelicopter->SetLookAtPosition(seek);
+}
+
+void AIActionHeliPursuit::HoldFormationSpot(int place, const UMath::Vector3& perpLinVel) {
+    if (place <= 0) return;
+    const FormationSpot& spot = kFormationSpots[(place > FORMATION_SPOTS ? FORMATION_SPOTS : place) - 1];
+    UMath::Vector3 player = mPlayerRigidBody->GetPosition();
+    UMath::Vector3 seek = mIVehicleAI->GetDriveTarget();
+    float aheadX = seek.x - player.x;
+    float aheadZ = seek.z - player.z;
+    float lead = sqrtf(aheadX * aheadX + aheadZ * aheadZ);
+    if (lead < SHORTEST_LEAD) return;
+    aheadX /= lead;
+    aheadZ /= lead;
+    seek.x += aheadZ * spot.side - aheadX * spot.back;
+    seek.z -= aheadX * spot.side + aheadZ * spot.back;
+    seek.y += spot.up;
+    ChaseToward(seek, perpLinVel);
+}
+
+void AIActionHeliPursuit::ChaseToward(const UMath::Vector3& seek, const UMath::Vector3& perpLinVel) {
+    UMath::Vector3 me = mIRigidBody->GetPosition();
+    float toSeekX = seek.x - me.x;
+    float toSeekZ = seek.z - me.z;
+    float distance = sqrtf(toSeekX * toSeekX + toSeekZ * toSeekZ);
+    float adjust = distance > 0 ? (toSeekX * perpLinVel.x + toSeekZ * perpLinVel.z) / distance : 0;
+    if (adjust < 0) adjust /= 2;
+    float closing = distance > FAR_SEEK ? gClosingSpeed.farSpeed
+                  : distance > MID_SEEK ? gClosingSpeed.midSpeed
+                  : distance > NEAR_SEEK ? gClosingSpeed.nearSpeed
+                                         : distance;
+
+    mIVehicleAI->SetDriveSpeed(adjust + closing);
+    mIVehicleAI->SetDriveTarget(seek);
+}
+
+void AIActionHeliPursuit::SkidHitPursuit() {
+    ((VoidMethod)SKID_HIT_PURSUIT)(this);
 }
 
 void AIActionHeliPursuit::StrikePerp() {
-    JoinSquad(this, SimTime());
+    JoinSquad(this, Sim::GetTime());
     gHeli->attacked = true;
-    AdvanceStrikeClock(mPursuitTime);
+    AdvanceClock(gHeli->strikeClock, gHeli->lastStrikeTime, mPursuitTime);
     if (mPursuitMode != kSkid_Hit_Strike) gHeli->striking = false;
-    const bool keepDiving = gHeli->striking && CanKeepDiving();
-    if (keepDiving && mSkidKnockTimer < kStrikeHold) mSkidKnockTimer = kStrikeHold;
-    const kPursuitMode modeBefore = mPursuitMode;
-    const float timerBefore = mSkidKnockTimer;
+    bool keepDiving = gHeli->striking && CanKeepDiving();
+    if (keepDiving && mSkidKnockTimer < Seconds(STRIKE_HOLD_MS)) mSkidKnockTimer = Seconds(STRIKE_HOLD_MS);
+    kPursuitMode modeBefore = mPursuitMode;
+    float timerBefore = mSkidKnockTimer;
 
     SkidHitPursuit();
 
-    if (mPursuitMode == kStraight_Line && timerBefore > 0.0f && KeepsUpWhileReversing()) {
-        Log::Info("AIActionHeliPursuit 0x%p  kept the attack going while the perp reverses (the game judged it by the car's nose)  mSkidKnockTimer[+0x64]=%.2f",
-                  this, timerBefore);
+    if (mPursuitMode == kStraight_Line && timerBefore > 0 && KeepsUpWhileReversing()) {
         mPursuitMode = modeBefore;
         mSkidKnockTimer = timerBefore;
     }
@@ -547,12 +520,10 @@ void AIActionHeliPursuit::StrikePerp() {
     }
 
     if (keepDiving && mPursuitMode != kSkid_Hit_Strike) {
-        Log::Info("AIActionHeliPursuit 0x%p  strike kept going %.2fs in: the game gave up with no hit (mSkidKnockTimer[+0x64]=%.2f)", this,
-                  gHeli->strikeClock - gHeli->strikeStart, mSkidKnockTimer);
         mPursuitMode = kSkid_Hit_Strike;
-        mSkidKnockTimer = kStrikeHold;
+        mSkidKnockTimer = Seconds(STRIKE_HOLD_MS);
     }
-    if (mPursuitMode != kSkid_Hit_Strike || mPlayerRigidBody == nullptr || mIRigidBody == nullptr) {
+    if (mPursuitMode != kSkid_Hit_Strike || mPlayerRigidBody == NULL || mIRigidBody == NULL) {
         gHeli->striking = false;
         return;
     }
@@ -561,252 +532,236 @@ void AIActionHeliPursuit::StrikePerp() {
         gHeli->strikeHit = false;
         gHeli->sweeping = false;
         gHeli->strikeStart = gHeli->strikeClock;
-        Log::Info("AIActionHeliPursuit 0x%p  strike begins  mSkidKnockTimer[+0x64]=%.2f mSkidHitOffset[+0x90]=(%.2f, %.2f, %.2f)", this, mSkidKnockTimer,
-                  mSkidHitOffset.x, mSkidHitOffset.y, mSkidHitOffset.z);
     }
     Dive();
+}
+
+bool AIActionHeliPursuit::ShouldAttackParkedPerp() const {
+    if (mPlayerRigidBody == NULL || mIRigidBody == NULL || mIVehicleAI == NULL) return false;
+    if (!(mSkidKnockTimer < -TIME_BETWEEN_SKID_HIT_ATTEMPTS)) return false;
+    const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
+    if (perpLinVel.x * perpLinVel.x + perpLinVel.z * perpLinVel.z >= PARKED_SPEED * PARKED_SPEED) return false;
+    IPursuit* pursuit = mIVehicleAI->GetPursuit();
+    if (pursuit == NULL || !pursuit->SkidHitEnabled()) return false;
+    UMath::Vector3 perp2Me = mIRigidBody->GetPosition() - mPlayerRigidBody->GetPosition();
+    float distance = sqrtf(UMath::Dot(perp2Me, perp2Me));
+    return distance > SKID_HIT_NEAREST && distance < SKID_HIT_FARTHEST && perp2Me.y < YDELT_FOR_SKID_KNOCK;
+}
+
+void AIActionHeliPursuit::AttackParkedPerp() {
+    mPursuitMode = kSkid_Hit_Approach;
+    mSkidKnockTimer = sSettings.AttackDuration;
+    mSkidHitOffset = UMath::Vector(0, 0, 0);
+    EAXAirSupport* airSupport = EAXAirSupport::SoundAIHeli();
+    if (airSupport != NULL)
+        airSupport->SelfStrategy(bRandom(STRATEGY_CHOICES) != 0 ? EAXAirSupport::Type_self_strategy_type_Rolling_Roadblock
+                                                                : EAXAirSupport::Type_self_strategy_type_Herding);
+}
+
+bool AIActionHeliPursuit::KeepsUpWhileReversing() const {
+    if (mIRigidBody == NULL || !IsPerpReversing()) return false;
+    UMath::Vector3 car = mPlayerRigidBody->GetPosition();
+    const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
+    UMath::Vector3 heli = mIRigidBody->GetPosition();
+    UMath::Vector3 apart = heli - car;
+    float distanceSq = UMath::Dot(apart, apart);
+    if (apart.x * perpLinVel.x + apart.z * perpLinVel.z > 0) return distanceSq <= AHEAD_REACH * AHEAD_REACH && heli.y >= car.y;
+    return distanceSq <= BEHIND_REACH * BEHIND_REACH;
+}
+
+bool AIActionHeliPursuit::ShouldStrikeNow() const {
+    if (mPlayerRigidBody == NULL || mIRigidBody == NULL) return false;
+    UMath::Vector3 car = mPlayerRigidBody->GetPosition();
+    const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
+    UMath::Vector3 heli = mIRigidBody->GetPosition();
+    UMath::Vector3 right = UMath::Vector(0, 0, 0);
+    mPlayerRigidBody->GetRightVector(right);
+    UMath::Vector3 apart = heli - car;
+    if (fabsf(UMath::Dot(apart, right)) <= Metres(SIDE_CLEARANCE_MM)) return false;
+
+    UMath::Vector3 lineUp = car + carVelocity * Seconds(APPROACH_LEAD_MS) + mSkidHitOffset;
+    float speed = sqrtf(carVelocity.x * carVelocity.x + carVelocity.z * carVelocity.z);
+    if (UMath::Distancexz(heli, lineUp) <= Larger(GAME_STRIKE_START, speed * Seconds(STRIKE_START_MS_PER_SPEED))) return true;
+    return gHeli->strikeClock - gHeli->approachStart >= APPROACH_PATIENCE_SECONDS && UMath::Dot(apart, apart) <= STRIKE_REACH * STRIKE_REACH;
+}
+
+void AIActionHeliPursuit::BeginStrike() {
+    mPursuitMode = kSkid_Hit_Strike;
+    if (mSkidKnockTimer < GAME_STRIKE_SECONDS) mSkidKnockTimer = GAME_STRIKE_SECONDS;
+    gHeli->approaching = false;
+    EAXAirSupport* airSupport = EAXAirSupport::SoundAIHeli();
+    if (airSupport != NULL) airSupport->IntentToRam();
+}
+
+bool AIActionHeliPursuit::CanKeepDiving() const {
+    if (mPursuitMode != kSkid_Hit_Strike || gHeli->strikeHit || mPlayerRigidBody == NULL || mIRigidBody == NULL) return false;
+    if (gHeli->strikeClock - gHeli->strikeStart >= LONGEST_STRIKE_SECONDS) return false;
+    UMath::Vector3 apart = mIRigidBody->GetPosition() - mPlayerRigidBody->GetPosition();
+    return apart.y > UNDER_CAR && UMath::Dot(apart, apart) <= STRIKE_REACH * STRIKE_REACH;
+}
+
+void AIActionHeliPursuit::Dive() {
+    UMath::Vector3 car = mPlayerRigidBody->GetPosition();
+    const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
+    UMath::Vector3 heli = mIRigidBody->GetPosition();
+    UMath::Vector3 apart = heli - car;
+
+    UMath::Vector3 forward = UMath::Vector(0, 0, 0);
+    UMath::Vector3 right = UMath::Vector(0, 0, 0);
+    UMath::Vector3 carSize = UMath::Vector(0, 0, 0);
+    mPlayerRigidBody->GetForwardVector(forward);
+    mPlayerRigidBody->GetRightVector(right);
+    mPlayerRigidBody->GetDimension(carSize);
+    float side = UMath::Dot(apart, right);
+    UMath::Vector3 outward = right * (float)(side < 0 ? -1 : 1);
+
+    UMath::Vector3 heliForward = UMath::Vector(0, 0, 0);
+    UMath::Vector3 heliRight = UMath::Vector(0, 0, 0);
+    UMath::Vector3 heliUp = UMath::Vector(0, 0, 0);
+    mIRigidBody->GetForwardVector(heliForward);
+    mIRigidBody->GetRightVector(heliRight);
+    mIRigidBody->GetUpVector(heliUp);
+    UMath::Vector3 cabinOffset = MetresOf(CollisionGeometry::kHeliCabinOffsetMm);
+    UMath::Vector3 heliSize = MetresOf(CollisionGeometry::kHeliCabinHalfMm);
+    UMath::Vector3 cabin = heli + heliRight * cabinOffset.x + heliUp * cabinOffset.y + heliForward * cabinOffset.z - car;
+    bool touching = fabsf(UMath::Dot(cabin, right)) <= carSize.x + heliSize.x - Metres(CONTACT_OVERLAP_MM)
+                 && fabsf(UMath::Dot(cabin, forward)) <= carSize.z + heliSize.z && fabsf(cabin.y) <= carSize.y + heliSize.y;
+    if (!gHeli->strikeHit && touching) {
+        gHeli->strikeHit = true;
+        if (mSkidKnockTimer > Seconds(AFTER_HIT_MS)) mSkidKnockTimer = Seconds(AFTER_HIT_MS);
+        BounceOff(outward);
+        HitCar(outward);
+    }
+    if (!gHeli->sweeping && apart.y <= Metres(SWEEP_HEIGHT_MM)) gHeli->sweeping = true;
+
+    UMath::Vector3 target = car + carVelocity * Seconds(STRIKE_LEAD_MS);
+    if (gHeli->strikeHit) {
+        target = target + outward * BOUNCE_SIDE;
+        target.y = car.y + BOUNCE_HEIGHT;
+    } else {
+        target = target + mSkidHitOffset * (gHeli->sweeping ? -Fraction(STRIKE_CROSSING_PERCENT) : (float)LINE_UP_DISTANCE / SKID_HIT_SIDE);
+        target.y = car.y + Metres(STRIKE_HEIGHT_MM);
+    }
+    mIVehicleAI->SetDriveTarget(target);
 }
 
 void AIActionHeliPursuit::BounceOff(const UMath::Vector3& outward) {
     const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
     const UMath::Vector3& heliVelocity = mIRigidBody->GetLinearVelocity();
-    const float closing = -Dot(heliVelocity - carVelocity, outward);
-    if (closing <= 0.0f) return;
+    float closing = -UMath::Dot(heliVelocity - carVelocity, outward);
+    if (closing <= 0) return;
 
-    const UMath::Vector3 velocity = heliVelocity + outward * closing;
+    UMath::Vector3 velocity = heliVelocity + outward * closing;
     mIRigidBody->SetLinearVelocity(velocity);
-    Log::Info("AIActionHeliPursuit 0x%p  strike bounced off the car, stopped %.1f m/s of closing speed", this, closing);
 }
 
-void AIActionHeliPursuit::Dive() {
-    const UMath::Vector3  car = mPlayerRigidBody->GetPosition();
-    const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
-    const UMath::Vector3  heli = mIRigidBody->GetPosition();
-    const UMath::Vector3& heliVelocity = mIRigidBody->GetLinearVelocity();
-    const UMath::Vector3  apart = heli - car;
-    const float           heliSpeed = std::sqrt(heliVelocity.x * heliVelocity.x + heliVelocity.y * heliVelocity.y + heliVelocity.z * heliVelocity.z);
+void AIActionHeliPursuit::HitCar(const UMath::Vector3& outward) {
+    UMath::Vector3 away = outward * -1;
+    UMath::Vector3 before = mPlayerRigidBody->GetLinearVelocity();
+    UMath::Vector3 velocity = before + away * IMPACT_KNOCK;
+    velocity.x -= before.x * Fraction(IMPACT_SPEED_LOSS_PERCENT);
+    velocity.z -= before.z * Fraction(IMPACT_SPEED_LOSS_PERCENT);
+    mPlayerRigidBody->SetLinearVelocity(velocity);
 
-    UMath::Vector3 forward = {};
-    UMath::Vector3 right = {};
-    mPlayerRigidBody->GetForwardVector(forward);
-    mPlayerRigidBody->GetRightVector(right);
-    const float          ahead = Dot(apart, forward);
-    const float          side = Dot(apart, right);
-    UMath::Vector3 carSize = {};
-    mPlayerRigidBody->GetDimension(carSize);
-    const UMath::Vector3 outward = right * (side < 0.0f ? -1.0f : 1.0f);
-
-    UMath::Vector3 heliForward = {};
-    UMath::Vector3 heliRight = {};
-    UMath::Vector3 heliUp = {};
-    mIRigidBody->GetForwardVector(heliForward);
-    mIRigidBody->GetRightVector(heliRight);
-    mIRigidBody->GetUpVector(heliUp);
-    const UMath::Vector3& cabinOffset = CollisionGeometry::Collections::kHeliCabinOffset;
-    const UMath::Vector3& heliSize = CollisionGeometry::Collections::kHeliCabinHalf;
-    const UMath::Vector3  cabin = heli + heliRight * cabinOffset.x + heliUp * cabinOffset.y + heliForward * cabinOffset.z - car;
-    const bool touching = std::fabs(Dot(cabin, right)) <= carSize.x + heliSize.x - kContactOverlap && std::fabs(Dot(cabin, forward)) <= carSize.z + heliSize.z &&
-                          std::fabs(cabin.y) <= carSize.y + heliSize.y;
-    if (!gHeli->strikeHit && touching) {
-        gHeli->strikeHit = true;
-        if (mSkidKnockTimer > kAfterHit) mSkidKnockTimer = kAfterHit;
-        Log::Info("AIActionHeliPursuit 0x%p  strike hit the car %.2fs in  ahead=%.2f side=%.2f up=%.2f heliSpeed=%.1f  car half=(%.2f %.2f %.2f) heli half=(%.2f %.2f %.2f)",
-                  this, gHeli->strikeClock - gHeli->strikeStart, ahead, side, apart.y, heliSpeed, carSize.x, carSize.y, carSize.z, heliSize.x, heliSize.y, heliSize.z);
-        BounceOff(outward);
+    UMath::Vector3 up = UMath::Vector(0, 0, 0);
+    mPlayerRigidBody->GetUpVector(up);
+    UMath::Vector3 rollAxis = UMath::Cross(up, away);
+    float rollAxisLength = sqrtf(UMath::Dot(rollAxis, rollAxis));
+    if (rollAxisLength > Metres(SHORTEST_FLIP_AXIS_MM)) {
+        UMath::Vector3 spin = mPlayerRigidBody->GetAngularVelocity() + rollAxis * (IMPACT_FLIP_DEGREES * RADIANS_PER_DEGREE / rollAxisLength);
+        mPlayerRigidBody->SetAngularVelocity(spin);
     }
-    if (!gHeli->sweeping && apart.y <= kSweepHeight) {
-        gHeli->sweeping = true;
-        Log::Info("AIActionHeliPursuit 0x%p  strike level with the car %.2fs in, sweeping across  dXZ=%.2f dY=%.2f", this, gHeli->strikeClock - gHeli->strikeStart,
-                  UMath::Distancexz(heli, car), apart.y);
-    }
-
-    UMath::Vector3 target = car + carVelocity * kStrikeLead;
-    if (gHeli->strikeHit) {
-        target = target + outward * kBounceSide;
-        target.y = car.y + kBounceHeight;
-    } else {
-        target = target + mSkidHitOffset * (gHeli->sweeping ? -kStrikeCrossing : kLineUpDistance / kSkidHitSide);
-        target.y = car.y + kStrikeHeight;
-    }
-    mIVehicleAI->SetDriveTarget(target);
-
-#if defined(_DEBUG)
-    if (gHeli->strikeClock - gHeli->lastStrikeLog < 0.25f && gHeli->strikeClock >= gHeli->lastStrikeLog) return;
-    gHeli->lastStrikeLog = gHeli->strikeClock;
-    const UMath::Vector3 aim = target - car;
-    Log::Info("AIActionHeliPursuit 0x%p  strike %.2fs %s  heli ahead=%.1f side=%.1f up=%.1f speed=%.1f  target ahead=%.1f side=%.1f up=%.1f  "
-              "mSkidKnockTimer[+0x64]=%.2f",
-              this, gHeli->strikeClock - gHeli->strikeStart, gHeli->strikeHit ? "bounce" : gHeli->sweeping ? "sweep" : "beside", ahead, side, apart.y, heliSpeed,
-              Dot(aim, forward), Dot(aim, right), aim.y, mSkidKnockTimer);
-#endif
-}
-
-void AIActionHeliPursuit::LeadReversing(const UMath::Vector3& perpLinVel, float speed) {
-    const UMath::Vector3 player = mPlayerRigidBody->GetPosition();
-    UMath::Vector3 seek = mIVehicleAI->GetDriveTarget();
-    const float lead = UMath::Distancexz(seek, player);
-    seek.x = player.x + perpLinVel.x / speed * lead;
-    seek.z = player.z + perpLinVel.z / speed * lead;
-    ChaseToward(seek, perpLinVel);
-    mIAIHelicopter->SetLookAtPosition(seek);
-}
-
-void AIActionHeliPursuit::HoldFormationSpot(int place, const UMath::Vector3& perpLinVel) {
-    if (place <= 0) return;
-    const FormationSpot& spot = kFormationSpots[std::min(place, kNumFormationSpots) - 1];
-    const UMath::Vector3 player = mPlayerRigidBody->GetPosition();
-    UMath::Vector3 seek = mIVehicleAI->GetDriveTarget();
-    float aheadX = seek.x - player.x;
-    float aheadZ = seek.z - player.z;
-    const float lead = std::sqrt(aheadX * aheadX + aheadZ * aheadZ);
-    if (lead < kShortestLead) return;
-    aheadX /= lead;
-    aheadZ /= lead;
-    seek.x += aheadZ * spot.side - aheadX * spot.back;
-    seek.z -= aheadX * spot.side + aheadZ * spot.back;
-    seek.y += spot.up;
-    ChaseToward(seek, perpLinVel);
-}
-
-void AIActionHeliPursuit::ChaseToward(const UMath::Vector3& seek, const UMath::Vector3& perpLinVel) {
-    const UMath::Vector3 me = mIRigidBody->GetPosition();
-    const float toSeekX = seek.x - me.x;
-    const float toSeekZ = seek.z - me.z;
-    const float distance = std::sqrt(toSeekX * toSeekX + toSeekZ * toSeekZ);
-    float adjust = distance > 0.0f ? (toSeekX * perpLinVel.x + toSeekZ * perpLinVel.z) / distance : 0.0f;
-    if (adjust < 0.0f) adjust *= 0.5f;
-    const float closing = distance > kFarSeek ? sClosingSpeed.farSpeed
-                        : distance > kMidSeek ? sClosingSpeed.midSpeed
-                        : distance > kNearSeek ? sClosingSpeed.nearSpeed
-                                               : distance;
-
-    mIVehicleAI->SetDriveSpeed(adjust + closing);
-    mIVehicleAI->SetDriveTarget(seek);
-}
-
-void AIActionHeliPursuit::ChasePerp() {
-    const float now = SimTime();
-    const int joined = JoinSquad(this, now);
-    if (gHeli->attacked) {
-        gHeli->attacked = false;
-        gSquad.SendToBack(this, now);
-    } else if (joined == 0 && gSquad.Size() > 1 && mSkidKnockTimer < -kLeadPatience) {
-        Log::Info("AIActionHeliPursuit 0x%p  no attack chance for %.1fs as squad lead, handing over  mSkidKnockTimer[+0x64]=%.2f", this,
-                  kSkidHitNotYet - mSkidKnockTimer, mSkidKnockTimer);
-        gSquad.SendToBack(this, now);
-    }
-    const int place = gHeli->place = gSquad.Place(this);
-    const bool covered = IsPerpUnderCover();
-    if ((covered || !gSquad.MayAttack(this, now)) && mSkidKnockTimer < kSkidHitNotYet) mSkidKnockTimer = kSkidHitNotYet;
-    StraightLinePursuit();
-    if (IsSkidHitting()) gHeli->attacked = true;
-    if (mPlayerRigidBody == nullptr) return;
-    const UMath::Vector3& perpLinVel = mPlayerRigidBody->GetLinearVelocity();
-    const float speed = std::sqrt(perpLinVel.x * perpLinVel.x + perpLinVel.z * perpLinVel.z);
-    if (mPursuitMode == kStraight_Line && IsPerpReversing()) LeadReversing(perpLinVel, speed);
-    if (mPursuitMode == kStraight_Line) HoldFormationSpot(place, perpLinVel);
-    if (speed < kEscapeHeadingSpeed) return;
-    gEscapeHeadingX = perpLinVel.x / speed;
-    gEscapeHeadingZ = perpLinVel.z / speed;
 }
 
 void AIActionHeliPursuit::StartSearch() {
-    const float now = SimTime();
+    float now = Sim::GetTime();
     JoinSquad(this, now);
-    if (now < gLastSearchTime || now - gLastSearchTime > kSquadTimeout) {
-        for (uintptr_t& visited : gVisitedSpots) visited = 0;
+    if (now < gLastSearchTime || now - gLastSearchTime > SQUAD_TIMEOUT_SECONDS) {
+        for (int i = 0; i < MOST_VISITED_SPOTS; ++i) gVisitedSpots[i] = NULL;
         gNextVisitedSpot = 0;
     }
     gLastSearchTime = now;
-    gHeli->searchRadius = sSettings.SearchRadiusFirst - kSearchRadiusGrowth;
-    gHeli->searchLapTurned = 0.0f;
-    gHeli->searchDirection = RandomUnit() < 0.5f ? 1.0f : -1.0f;
+    gHeli->searchRadius = sSettings.SearchRadiusFirst - SEARCH_RADIUS_GROWTH;
+    gHeli->searchLapTurned = 0;
+    gHeli->searchDirection = (float)(Chance(COIN_FLIP_PERCENT) ? 1 : -1);
     gHeli->pointsSinceHover = 0;
     gHeli->hoverHere = false;
-    gHeli->hoverEnd = -1.0f;
+    gHeli->hoverEnd = NOT_HOVERING;
     gHeli->lastPursuitTime = mPursuitTime;
-    Log::Info("AIActionHeliPursuit 0x%p  StartSearch  mPursuitTime[+0x60]=%.2f dir=%+.0f escape=(%.3f, %.3f) mSearchPatternAngle[+0x70]=%.3f place=%d", this,
-              mPursuitTime, gHeli->searchDirection, gEscapeHeadingX, gEscapeHeadingZ, mSearchPatternAngle, gHeli->place);
     SetNextSearchPoint();
 }
 
 void AIActionHeliPursuit::SetNextSearchPoint() {
     IPursuit* ip = mIVehicleAI->GetPursuit();
-    if (ip == nullptr) return;
+    if (ip == NULL) return;
 
     const UMath::Vector3& lastKnown = ip->GetLastKnownLocation();
-    const UMath::Vector3  myPosition = mIRigidBody->GetPosition();
+    UMath::Vector3 myPosition = mIRigidBody->GetPosition();
 
-    gHeli->searchRadius = std::min(gHeli->searchRadius + kSearchRadiusGrowth, sSettings.SearchRadiusLargest);
-    const float progress = SearchProgress();
-    gHeli->searchSpeed  = Lerp(sSettings.SearchSpeedMin, sSettings.SearchSpeedMax, progress);
-    gHeli->searchHeight = Lerp(kSearchHeightNear, kSearchHeightFar, progress);
-    gHeli->hoverHere    = ++gHeli->pointsSinceHover >= kPointsPerHover;
+    gHeli->searchRadius = Smaller(gHeli->searchRadius + SEARCH_RADIUS_GROWTH, sSettings.SearchRadiusLargest);
+    float progress = SearchProgress();
+    gHeli->searchSpeed = Lerp(sSettings.SearchSpeedMin, sSettings.SearchSpeedMax, progress);
+    gHeli->searchHeight = Lerp(SEARCH_HEIGHT_NEAR, SEARCH_HEIGHT_FAR, progress);
+    gHeli->hoverHere = ++gHeli->pointsSinceHover >= POINTS_PER_HOVER;
 
-    UMath::Vector3 spot = {};
+    UMath::Vector3 spot = UMath::Vector(0, 0, 0);
     if (gHeli->hoverHere && FindHidingSpot(lastKnown, gHeli->searchRadius, myPosition, spot)) {
         mSearchDestPoint = spot;
-        Log::Info("AIActionHeliPursuit 0x%p  SetNextSearchPoint  hiding spot (%.2f, %.2f, %.2f) radius=%.1f", this, spot.x, spot.y, spot.z,
-                  gHeli->searchRadius);
     } else {
-        const bool  haveHeading = gEscapeHeadingX != 0.0f || gEscapeHeadingZ != 0.0f;
-        const float headingTurn = haveHeading ? std::atan2(gEscapeHeadingZ, gEscapeHeadingX) / kTwoPi : 0.0f;
-        float       offset = 0.0f;
+        bool haveHeading = gEscapeHeadingX != 0 || gEscapeHeadingZ != 0;
+        float headingTurn = haveHeading ? atan2f(gEscapeHeadingZ, gEscapeHeadingX) / RADIANS_PER_TURN : 0;
+        float offset = 0;
         if (haveHeading) {
             gHeli->searchDirection = -gHeli->searchDirection;
-            offset = gHeli->searchDirection * RandomRange(0.0f, Lerp(kSearchConeFirst, kSearchConeLargest, progress));
+            offset = gHeli->searchDirection * RandomRange(0, Lerp(Fraction(SEARCH_CONE_FIRST_PERCENT), Fraction(SEARCH_CONE_LARGEST_PERCENT), progress));
             mSearchPatternAngle = WrapTurn(headingTurn + offset);
         } else {
-            const float step = RandomRange(kSearchSmallestStep, kSearchLargestStep);
+            float step = RandomRange(Fraction(SEARCH_SMALLEST_STEP_PERCENT), Fraction(SEARCH_LARGEST_STEP_PERCENT));
             gHeli->searchLapTurned += step;
-            if (gHeli->searchLapTurned >= 1.0f) {
-                gHeli->searchLapTurned -= 1.0f;
-                if (RandomUnit() < 0.5f) gHeli->searchDirection = -gHeli->searchDirection;
+            if (gHeli->searchLapTurned >= 1) {
+                gHeli->searchLapTurned -= 1;
+                if (Chance(COIN_FLIP_PERCENT)) gHeli->searchDirection = -gHeli->searchDirection;
             }
             mSearchPatternAngle = WrapTurn(mSearchPatternAngle + step * gHeli->searchDirection);
         }
 
-        float groundX = 0.0f;
-        float groundZ = 0.0f;
+        float groundX = 0;
+        float groundZ = 0;
         if (GroundUnitsDirection(ip, mIVehicle, lastKnown, groundX, groundZ)) {
-            const float angle = mSearchPatternAngle * kTwoPi;
-            if (std::cos(angle) * groundX + std::sin(angle) * groundZ > kGroundUnitSide)
-                mSearchPatternAngle = WrapTurn(haveHeading ? headingTurn - offset : mSearchPatternAngle + 0.5f);
+            float angle = mSearchPatternAngle * RADIANS_PER_TURN;
+            if (cosf(angle) * groundX + sinf(angle) * groundZ > Fraction(GROUND_UNIT_SIDE_PERCENT))
+                mSearchPatternAngle = WrapTurn(haveHeading ? headingTurn - offset : mSearchPatternAngle + Fraction(HALF_TURN_PERCENT));
         }
 
-        const float radius = gHeli->searchRadius * RandomRange(1.0f - kSearchRadiusJitter, 1.0f + kSearchRadiusJitter);
-        const float angle = (mSearchPatternAngle + kSearchSpread[std::clamp(gHeli->place, 0, kNumSearchSpreads - 1)]) * kTwoPi;
-        mSearchDestPoint = { lastKnown.x + std::cos(angle) * radius, lastKnown.y, lastKnown.z + std::sin(angle) * radius };
+        float radius = gHeli->searchRadius * RandomRange(1 - Fraction(SEARCH_RADIUS_JITTER_PERCENT), 1 + Fraction(SEARCH_RADIUS_JITTER_PERCENT));
+        float angle = (mSearchPatternAngle + Fraction(kSearchSpreadPercent[ClampInt(gHeli->place, 0, SEARCH_SPREADS - 1)])) * RADIANS_PER_TURN;
+        mSearchDestPoint = UMath::Vector(lastKnown.x + cosf(angle) * radius, lastKnown.y, lastKnown.z + sinf(angle) * radius);
         mIAIHelicopter->RestrictPointToRoadNet(mSearchDestPoint);
     }
     mIAIHelicopter->FilterHeliAltitude(mSearchDestPoint);
     mSearchDestPoint.y += gHeli->searchHeight;
-    Log::Info("AIActionHeliPursuit 0x%p  SetNextSearchPoint  GetLastKnownLocation=(%.2f, %.2f, %.2f) radius=%.1f speed=%.1f height=%.1f hover=%d "
-              "mSearchPatternAngle[+0x70]=%.3f mSearchDestPoint[+0x74]=(%.2f, %.2f, %.2f)",
-              this, lastKnown.x, lastKnown.y, lastKnown.z, gHeli->searchRadius, gHeli->searchSpeed, gHeli->searchHeight, gHeli->hoverHere, mSearchPatternAngle,
-              mSearchDestPoint.x, mSearchDestPoint.y, mSearchDestPoint.z);
 }
 
 void AIActionHeliPursuit::SearchForPerp() {
-    gLastSearchTime = SimTime();
+    gLastSearchTime = Sim::GetTime();
     JoinSquad(this, gLastSearchTime);
-    AdvanceSearchClock(mPursuitTime);
-    const UMath::Vector3 myPosition = mIRigidBody->GetPosition();
+    AdvanceClock(gHeli->searchClock, gHeli->lastPursuitTime, mPursuitTime);
+    UMath::Vector3 myPosition = mIRigidBody->GetPosition();
 
-    if (gHeli->hoverEnd >= 0.0f) {
+    if (gHeli->hoverEnd >= 0) {
         if (gHeli->searchClock < gHeli->hoverEnd) {
             HoverAndLook(myPosition);
             return;
         }
-        gHeli->hoverEnd = -1.0f;
+        gHeli->hoverEnd = NOT_HOVERING;
         SetNextSearchPoint();
-    } else if (UMath::Distancexz(myPosition, mSearchDestPoint) < kSearchNextPointRange) {
+    } else if (UMath::Distancexz(myPosition, mSearchDestPoint) < SEARCH_NEXT_POINT_RANGE) {
         if (gHeli->hoverHere) {
             gHeli->hoverHere = false;
             gHeli->pointsSinceHover = 0;
             gHeli->hoverPoint = myPosition;
             gHeli->hoverStart = gHeli->searchClock;
-            gHeli->hoverEnd = gHeli->searchClock + RandomRange(kHoverShortest, kHoverLongest);
+            gHeli->hoverEnd = gHeli->searchClock + RandomRange(HOVER_SHORTEST_SECONDS, HOVER_LONGEST_SECONDS);
             gHeli->hoverLookAngle = mSearchPatternAngle;
             HoverAndLook(myPosition);
             return;
@@ -818,69 +773,162 @@ void AIActionHeliPursuit::SearchForPerp() {
     mIAIHelicopter->SetDestinationVelocity(mIRigidBody->GetLinearVelocity());
     mIVehicleAI->SetDriveTarget(mSearchDestPoint);
     mIAIHelicopter->SetLookAtPosition(SearchLookAt(myPosition));
-    mIVehicleAI->DoDriving(kSearchDrivingFlags);
+    mIVehicleAI->DoDriving(SEARCH_DRIVING_FLAGS);
 }
 
 void AIActionHeliPursuit::HoverAndLook(const UMath::Vector3& myPosition) {
-    const float duration = gHeli->hoverEnd - gHeli->hoverStart;
-    const float turned = duration > 0.0f ? (gHeli->searchClock - gHeli->hoverStart) / duration : 1.0f;
-    const float angle = (gHeli->hoverLookAngle + turned) * kTwoPi;
-    const UMath::Vector3 lookAt = { myPosition.x + std::cos(angle) * kLookDistance, gHeli->hoverPoint.y - kHoverLookDrop,
-                                    myPosition.z + std::sin(angle) * kLookDistance };
-    const UMath::Vector3 still = {};
+    float duration = gHeli->hoverEnd - gHeli->hoverStart;
+    float turned = duration > 0 ? (gHeli->searchClock - gHeli->hoverStart) / duration : 1;
+    float angle = (gHeli->hoverLookAngle + turned) * RADIANS_PER_TURN;
+    UMath::Vector3 lookAt = UMath::Vector(myPosition.x + cosf(angle) * LOOK_DISTANCE, gHeli->hoverPoint.y - HOVER_LOOK_DROP,
+                                          myPosition.z + sinf(angle) * LOOK_DISTANCE);
+    UMath::Vector3 still = UMath::Vector(0, 0, 0);
 
-    mIVehicleAI->SetDriveSpeed(0.0f);
+    mIVehicleAI->SetDriveSpeed(0);
     mIAIHelicopter->SetDestinationVelocity(still);
     mIVehicleAI->SetDriveTarget(gHeli->hoverPoint);
     mIAIHelicopter->SetLookAtPosition(lookAt);
-    mIVehicleAI->DoDriving(kSearchDrivingFlags);
+    mIVehicleAI->DoDriving(SEARCH_DRIVING_FLAGS);
 }
 
 UMath::Vector3 AIActionHeliPursuit::SearchLookAt(const UMath::Vector3& myPosition) const {
-    const float distance = UMath::Distancexz(myPosition, mSearchDestPoint);
-    if (distance < 0.1f) return mSearchDestPoint;
+    float distance = UMath::Distancexz(myPosition, mSearchDestPoint);
+    if (distance < Metres(LOOKING_AT_DEST_MM)) return mSearchDestPoint;
 
-    const float forwardX = (mSearchDestPoint.x - myPosition.x) / distance;
-    const float forwardZ = (mSearchDestPoint.z - myPosition.z) / distance;
-    const float sweep = std::sin(mPursuitTime * kTwoPi / kLookSweepPeriod) * kLookSweepAngle;
-    const float c = std::cos(sweep);
-    const float s = std::sin(sweep);
-    return { myPosition.x + (forwardX * c - forwardZ * s) * kLookDistance, mSearchDestPoint.y,
-             myPosition.z + (forwardX * s + forwardZ * c) * kLookDistance };
+    float forwardX = (mSearchDestPoint.x - myPosition.x) / distance;
+    float forwardZ = (mSearchDestPoint.z - myPosition.z) / distance;
+    float sweep = sinf(mPursuitTime * RADIANS_PER_TURN / LOOK_SWEEP_PERIOD_SECONDS) * Radians(LOOK_SWEEP_MILLIRADIANS);
+    float c = cosf(sweep);
+    float s = sinf(sweep);
+    return UMath::Vector(myPosition.x + (forwardX * c - forwardZ * s) * LOOK_DISTANCE, mSearchDestPoint.y,
+                         myPosition.z + (forwardX * s + forwardZ * c) * LOOK_DISTANCE);
 }
 
-#if defined(_DEBUG)
-void AIActionHeliPursuit::LogLive(bool full) const {
-    gHeli = &gPursuits.Use(this);
-    if (mPursuitMode != gHeli->loggedMode) {
-        Log::Info("AIActionHeliPursuit 0x%p  mPursuitMode[+0xA4] %d %s -> %d %s  mPursuitTime[+0x60]=%.2f mSkidKnockTimer[+0x64]=%.2f place=%d", this,
-                  gHeli->loggedMode, PursuitModeName(gHeli->loggedMode), mPursuitMode, PursuitModeName(mPursuitMode), mPursuitTime, mSkidKnockTimer,
-                  gSquad.Place(this));
-        gHeli->loggedMode = mPursuitMode;
-    }
-    if (!full) return;
+namespace {
 
-    Log::Info("AIActionHeliPursuit 0x%p  vtbl=0x%08X mPursuitMode[+0xA4]=%d %s mPursuitTime[+0x60]=%.2f mSkidKnockTimer[+0x64]=%.2f "
-              "mPathTime[+0x68]=%.2f mBuildingPath[+0x6C]=%d mCollisionAbort[+0x9C]=%d",
-              this, *reinterpret_cast<const uint32_t*>(this), mPursuitMode, PursuitModeName(mPursuitMode), mPursuitTime, mSkidKnockTimer, mPathTime,
-              mBuildingPath, mCollisionAbort);
-    Log::Info("  mIVehicleAI[+0x4C]=0x%p mIRigidBody[+0x54]=0x%p mIAIHelicopter[+0x58]=0x%p mPlayerRigidBody[+0x80]=0x%p", mIVehicleAI, mIRigidBody,
-              mIAIHelicopter, mPlayerRigidBody);
-    Log::Info("  mPlayerPosition[+0x84]=(%.2f, %.2f, %.2f) mPlayerSpeed[+0xA0]=%.2f mSkidHitOffset[+0x90]=(%.2f, %.2f, %.2f)", mPlayerPosition.x,
-              mPlayerPosition.y, mPlayerPosition.z, mPlayerSpeed, mSkidHitOffset.x, mSkidHitOffset.y, mSkidHitOffset.z);
-    Log::Info("  mSearchPatternAngle[+0x70]=%.3f mSearchDestPoint[+0x74]=(%.2f, %.2f, %.2f)  radius=%.1f speed=%.1f dir=%+.0f lap=%.3f "
-              "escape=(%.3f, %.3f)",
-              mSearchPatternAngle, mSearchDestPoint.x, mSearchDestPoint.y, mSearchDestPoint.z, gHeli->searchRadius, gHeli->searchSpeed, gHeli->searchDirection,
-              gHeli->searchLapTurned, gEscapeHeadingX, gEscapeHeadingZ);
-
-    IPursuit* ip = mIVehicleAI != nullptr ? mIVehicleAI->GetPursuit() : nullptr;
-    if (ip != nullptr) {
-        const UMath::Vector3& lastKnown = ip->GetLastKnownLocation();
-        Log::Info("  IPursuit=0x%p GetPursuitDuration=%.2f GetEvadeLevel=%.3f GetCoolDownTimeRemaining=%.2f/%.2f IsPerpInSight=%d "
-                  "GetNumHeliSpawns=%d GetLastKnownLocation=(%.2f, %.2f, %.2f)",
-                  ip, ip->GetPursuitDuration(), ip->GetEvadeLevel(), ip->GetCoolDownTimeRemaining(), ip->GetCoolDownTimeRequired(), ip->IsPerpInSight(),
-                  ip->GetNumHeliSpawns(), lastKnown.x, lastKnown.y, lastKnown.z);
+    int bRandom(int range) {
+        return ((RandomFunction)B_RANDOM)(range);
     }
-    Log::Info("  sLeadDistance@0x%p base=%g max=%g", &sLeadDistance, sLeadDistance.base, sLeadDistance.max);
+
+    bool IsAlive(const AIActionHeliPursuit* action, const IRigidBody* heliRigidBody) {
+        DWORD vtable = 0;
+        const IRigidBody* rigidBody = NULL;
+        DWORD address = (DWORD)action;
+        return action != NULL && Memory::Read(address, &vtable, sizeof(vtable)) && vtable == HELI_PURSUIT_VTABLE
+            && Memory::Read(address + offsetof(AIActionHeliPursuit, mIRigidBody), &rigidBody, sizeof(rigidBody)) && rigidBody == heliRigidBody;
+    }
+
+    int JoinSquad(const AIActionHeliPursuit* action, float now) {
+        gHeli = &gPursuits.Use(action);
+        gHeli->place = gSquad.Join(action, now);
+        return gHeli->place;
+    }
+
+    void AdvanceClock(float& clock, float& lastTime, float pursuitTime) {
+        float dT = pursuitTime - lastTime;
+        if (dT < 0) dT = pursuitTime;
+        if (dT < 0 || dT > LONGEST_CLOCK_STEP_SECONDS) dT = 0;
+        clock += dT;
+        lastTime = pursuitTime;
+    }
+
+    float RandomUnit() {
+        gRandomState ^= gRandomState << 13;
+        gRandomState ^= gRandomState >> 17;
+        gRandomState ^= gRandomState << 5;
+        return (float)(gRandomState & RANDOM_MASK) / RANDOM_RANGE;
+    }
+
+    float RandomRange(float low, float high) {
+        return low + (high - low) * RandomUnit();
+    }
+
+    bool Chance(int percent) {
+        return RandomUnit() < Fraction(percent);
+    }
+
+    float Lerp(float from, float to, float t) {
+        return from + (to - from) * t;
+    }
+
+    float WrapTurn(float turn) {
+        turn -= floorf(turn);
+        return turn;
+    }
+
+    float Radians(int milliradians) {
+        return (float)milliradians / 1000;
+    }
+
+    float SearchProgress() {
+        float span = AIActionHeliPursuit::sSettings.SearchRadiusLargest - AIActionHeliPursuit::sSettings.SearchRadiusFirst;
+        if (span <= 0) return 1;
+        return Clamp((gHeli->searchRadius - AIActionHeliPursuit::sSettings.SearchRadiusFirst) / span, 0, 1);
+    }
+
+    bool WasVisited(const TrackPathZone* zone) {
+        for (int i = 0; i < MOST_VISITED_SPOTS; ++i)
+            if (gVisitedSpots[i] == zone) return true;
+        return false;
+    }
+
+    void MarkVisited(const TrackPathZone* zone) {
+        gVisitedSpots[gNextVisitedSpot] = zone;
+        gNextVisitedSpot = (gNextVisitedSpot + 1) % MOST_VISITED_SPOTS;
+    }
+
+    bool FindHidingSpot(const UMath::Vector3& lastKnown, float radius, const UMath::Vector3& myPosition, UMath::Vector3& spot) {
+        const TrackPathManager& manager = TrackPathManager::Get();
+        const TrackPathZone* best = NULL;
+        float bestDistance = 0;
+        for (int t = 0; t < HIDING_ZONE_TYPES; ++t) {
+            int type = kHidingZoneTypes[t];
+            const TrackPathManager::ZoneInfo& info = manager.ZoneInfoTable[type];
+            if (info.NumZones <= 0) continue;
+            int scanned = 0;
+            for (const TrackPathZone* zone = info.pFirstZone; zone != NULL && zone < info.pLastZone && scanned < MOST_ZONES_SCANNED;
+                 zone = zone->GetMemoryImageNext(), ++scanned) {
+                if (zone->MemoryImageSize <= 0) break;
+                if (zone->Type != type) continue;
+                UMath::Vector3 centre = UMath::Vector(-(zone->BBoxMin.y + zone->BBoxMax.y) / 2, zone->Elevation != 0 ? zone->Elevation : lastKnown.y,
+                                                      (zone->BBoxMin.x + zone->BBoxMax.x) / 2);
+                float distance = UMath::Distancexz(centre, myPosition);
+                if (UMath::Distancexz(centre, lastKnown) <= radius && !WasVisited(zone) && (best == NULL || distance < bestDistance)) {
+                    best = zone;
+                    bestDistance = distance;
+                    spot = centre;
+                }
+            }
+        }
+        if (best == NULL) return false;
+        MarkVisited(best);
+        return true;
+    }
+
+    bool GroundUnitsDirection(IPursuit* ip, const IVehicle* heli, const UMath::Vector3& lastKnown, float& x, float& z) {
+        IVehicle* vehicles[MOST_GROUND_UNITS] = { NULL };
+        int count = IVehicle::ReadList((DWORD)ip + IPURSUIT_IVEHICLE_LIST, vehicles, MOST_GROUND_UNITS);
+        float sumX = 0;
+        float sumZ = 0;
+        int used = 0;
+        for (int i = 0; i < count; ++i) {
+            const IVehicle* vehicle = vehicles[i];
+            if (vehicle == NULL || vehicle == heli) continue;
+            const UMath::Vector3* position = vehicle->GetPosition();
+            if (position == NULL || UMath::Distancexz(*position, lastKnown) > GROUND_UNIT_RANGE) continue;
+            sumX += position->x - lastKnown.x;
+            sumZ += position->z - lastKnown.z;
+            ++used;
+        }
+        float length = sqrtf(sumX * sumX + sumZ * sumZ);
+        if (used == 0 || length < 1) return false;
+        x = sumX / length;
+        z = sumZ / length;
+        return true;
+    }
+
+    UMath::Vector3 MetresOf(const short* millimetres) {
+        return UMath::Vector(Metres(millimetres[0]), Metres(millimetres[1]), Metres(millimetres[2]));
+    }
+
 }
-#endif

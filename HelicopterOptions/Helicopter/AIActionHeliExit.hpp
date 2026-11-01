@@ -11,37 +11,18 @@ class AIActionHeliExit {
     enum kExitMode {
         kSeekUp  = 0,
         kSeekCar = 1,
-        kFlyOut  = 2,
+        kFlyOut  = 2
     };
 
     struct Settings {
-        float FlySpeed = 100.0f;
+        Settings();
+
+        float FlySpeed;
     };
 
-    static inline Settings sSettings;
+    static Settings sSettings;
 
-    static inline const Ini::Setting kIniSettings[] = {
-        { "Helicopter:FlySpeed", "FlySpeed", &sSettings.FlySpeed, nullptr, 40.0f, 220.0f, true },
-    };
-
-    static constexpr uintptr_t        kUpdate         = 0x004279F0u;
-    static constexpr uintptr_t        kVTableUpdate   = 0x008913A4u;
-    static constexpr Patch::FloatPush kUpdateFlySpeed = { 0x00427BFEu, 100.0f };
-
-    static inline bool  sPatched  = false;
-    static inline float sFlySpeed = 0.0f;
-
-    static void InstallPatches() {
-        Patch::Begin("AIActionHeliExit::Update");
-        Patch::PushFloat("flySpeed", kUpdateFlySpeed, sSettings.FlySpeed);
-        sPatched = Patch::Commit();
-        sFlySpeed = sSettings.FlySpeed;
-
-        Patch::Begin("AIActionHeliExit vtable");
-        Patch::RedirectVirtual("Update", kVTableUpdate, kUpdate, Game::MethodAddress(&AIActionHeliExit::FlyAway));
-        Patch::Commit();
-    }
-
+    static void InstallPatches();
     static void Refresh();
 
     void FlyAway(float dT);
