@@ -6,13 +6,19 @@
 
 #define SIM_GET_TIME                     0x006E8DE0
 
+#define LOWEST_HEAT                      1
+#define HEAT_LEVELS                      10
+#define MOST_NAME_TEXT                   32
+
 #define IRIGIDBODY_GET_DIMENSION         0x048
 #define IRIGIDBODY_SET_LINEAR_VELOCITY   0x060
 #define IRIGIDBODY_SET_ANGULAR_VELOCITY  0x064
+#define IRIGIDBODY_PLACE_OBJECT          0x098
 
 typedef void  (__thiscall* VoidMethod)(void* object);
 typedef void  (__thiscall* IntMethod)(void* object, int value);
 typedef void  (__thiscall* PointerMethod)(void* object, const void* value);
+typedef void  (__thiscall* PairMethod)(void* object, const void* first, const void* second);
 typedef bool  (__thiscall* BoolQuery)(const void* object);
 typedef float (__thiscall* FloatQuery)(const void* object);
 typedef void* (__thiscall* PointerQuery)(const void* object);
@@ -97,18 +103,11 @@ namespace Patch {
         BYTE  code[6];
     };
 
-    struct JumpSite {
-        DWORD address;
-        BYTE  opcode[2];
-        DWORD target;
-    };
-
     void Begin();
     void RedirectFloat(const FloatOperand& site, const float* value);
     void PushFloat(const FloatPush& site, float value);
     void RedirectCall(const CallSite& site, const void* replacement);
     void RedirectIndirectCall(const IndirectCall& site, const void* replacement);
-    void RedirectJump(const JumpSite& site, const void* replacement);
     void RedirectVirtual(DWORD slot, DWORD function, const void* replacement);
     void DataFloat(DWORD address, float vanilla, float value);
     void StoreFloat(const FloatStore& site, float value);
@@ -323,6 +322,10 @@ class IRigidBody : public UTL::COM::IUnknown {
 
     void SetAngularVelocity(const UMath::Vector3& vel) {
         ((PointerMethod)VirtualFunction(this, IRIGIDBODY_SET_ANGULAR_VELOCITY))(this, &vel);
+    }
+
+    void PlaceObject(const UMath::Matrix4& orient, const UMath::Vector3& init_pos) {
+        ((PairMethod)VirtualFunction(this, IRIGIDBODY_PLACE_OBJECT))(this, &orient, &init_pos);
     }
 };
 

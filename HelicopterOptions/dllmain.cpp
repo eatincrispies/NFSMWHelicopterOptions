@@ -16,11 +16,9 @@ namespace {
     #define SET_HEAT_ARGUMENT                0x08
     #define PERP_IPERPETRATOR                0x758
 
-    #define LOWEST_HEAT                      1
-    #define HEAT_LEVELS                      10
     #define INIT_DELAY_MS                    1000
 
-    #define MOST_DETOURS                     10
+    #define MOST_DETOURS                     16
     #define MOST_STOLEN_BYTES                8
     #define TRAMPOLINE_SIZE                  64
     #define MOST_PENDING                     16
@@ -44,14 +42,11 @@ namespace {
 
     #define MOST_SETTING_PARTS               4
     #define MOST_VALUE_TEXT                  128
-    #define MOST_MESSAGE_TEXT                128
 
     const BYTE kSetHeatCode[] = { 0x6A, 0xFF, 0x68, 0xBC, 0x79, 0x86, 0x00 };
     const BYTE kAddEsp4Code[] = { 0x83, 0xC4, 0x04 };
 
     const char* const kIniFiles[] = { "General", "Advanced" };
-    const char        kNotificationSection[] = "Helicopter:Notification";
-    const char        kCopHeliKey[] = "copheli";
 
     struct IPlayerList {
         void*     mVTable;
@@ -62,12 +57,30 @@ namespace {
     };
 
     struct Setting {
+        const char*  section;
+        float*       number;
+        bool*        toggle;
+        float        min;
+        float        max;
+        bool         hasDefault;
+        const float* heatDefaults;
+        const bool*  heatToggles;
+    };
+
+    struct TextSetting {
         const char* section;
-        float*      number;
-        bool*       toggle;
-        float       min;
-        float       max;
+        char*       text;
         bool        hasDefault;
+    };
+
+    struct TextValues {
+        char vanilla[MOST_NAME_TEXT];
+        char base[MOST_NAME_TEXT];
+        char heat[HEAT_LEVELS][MOST_NAME_TEXT];
+        char race[HEAT_LEVELS][MOST_NAME_TEXT];
+        bool hasBase;
+        WORD hasHeat;
+        WORD hasRace;
     };
 
     struct Values {
@@ -112,7 +125,7 @@ namespace {
     const Setting kSettings[] = {
         { "Helicopter:Leading",                 &AIActionHeliPursuit::sSettings.LeadBase,                NULL,                                          0.0f,   100.0f,  true },
         { "Helicopter:Leading",                 &AIActionHeliPursuit::sSettings.LeadMax,                 NULL,                                          5.0f,   150.0f,  true },
-        { "Helicopter:AttackDuration",          &AIActionHeliPursuit::sSettings.AttackDuration,          NULL,                                          2.0f,   30.0f,   true },
+        { "Helicopter:HeliStrategy2",           &AIActionHeliPursuit::sSettings.AttackDuration,          NULL,                                          2.0f,   30.0f,   true },
         { "Helicopter:ClosingSpeed",            &AIActionHeliPursuit::sSettings.ClosingSpeedNear,        NULL,                                          0.0f,   200.0f,  true },
         { "Helicopter:ClosingSpeed",            &AIActionHeliPursuit::sSettings.ClosingSpeedMid,         NULL,                                          0.0f,   200.0f,  true },
         { "Helicopter:ClosingSpeed",            &AIActionHeliPursuit::sSettings.ClosingSpeedFar,         NULL,                                          0.0f,   200.0f,  true },
@@ -128,23 +141,31 @@ namespace {
         { "Helicopter:Brake",                   &AIVehicleHelicopter::sSettings.StoppingRatio,           NULL,                                          0.3f,   10.0f,   true },
         { "Helicopter:Brake",                   &AIVehicleHelicopter::sSettings.BrakeSpeedScale,         NULL,                                          0.0f,   1.0f,    true },
         { "Helicopter:LineOfSight",             &AIVehicleHelicopter::sSettings.LineOfSight,             NULL,                                          0.0f,   5000.0f, false },
-        { "Helicopter:FuelTime",                &AIVehicleHelicopter::sSettings.FuelTime,                NULL,                                          0.0f,   3600.0f, false },
+        { "Helicopter:FuelTime",                &AIVehicleHelicopter::sSettings.FuelTime,                NULL,                                          0.0f,   3600.0f, false, AIVehicleHelicopter::sSettings.HeatFuelTime },
         { "Helicopter:SpawnDistance",           &AIVehicleHelicopter::sSettings.SpawnDistance,           NULL,                                          30.0f,  600.0f,  true },
         { "Helicopter:AllAroundSight",          &AIVehicleHelicopter::sSettings.AllAroundSight,          NULL,                                          0.0f,   1000.0f, true },
         { "Helicopter:FrontSightOnly",          NULL,                                                    &AIVehicleHelicopter::sSettings.FrontSightOnly, 0.0f,   1.0f,    true },
-        { "Helicopter:Respawning",              &AIVehicleHelicopter::sSettings.RespawnDelay,            NULL,                                          0.0f,   600.0f,  false },
+        { "Helicopter:Respawning",              &AIVehicleHelicopter::sSettings.RespawnDelay,            NULL,                                          0.0f,   600.0f,  true },
         { "Helicopter:HidingSpots",             NULL,                                                    &AIVehicleHelicopter::sSettings.HidingSpots,    0.0f,   1.0f,    true },
         { "Helicopter:DespawnDistance",         &AIVehicleHelicopter::sSettings.DespawnDistance,         NULL,                                          100.0f, 5000.0f, true },
-        { "Helicopter:Helicopters",             &AIVehicleHelicopter::sSettings.Helicopters,             NULL,                                          1.0f,   4.0f,    true },
-        { "Helicopter:Falcon2",                 NULL,                                                    &AIVehicleHelicopter::sSettings.Falcon2,       0.0f,   1.0f,    true },
+        { "Helicopter:Helicopters",             &AIVehicleHelicopter::sSettings.Helicopters,             NULL,                                          1.0f,   4.0f,    true,  AIVehicleHelicopter::sSettings.HeatHelicopters },
+        { "Helicopter:Falcon2",                 NULL,                                                    &AIVehicleHelicopter::sSettings.Falcon2,       0.0f,   1.0f,    true,  NULL, AIVehicleHelicopter::sSettings.HeatFalcon2 },
         { "Helicopter:Recycle",                 &AIVehicleHelicopter::sSettings.RecycleTime,             NULL,                                          0.0f,   300.0f,  true },
         { "Helicopter:Recycle",                 &AIVehicleHelicopter::sSettings.RecycleDistance,         NULL,                                          0.0f,   2000.0f, true },
+        { "Helicopter:Disp911Report",           NULL,                                                    &AIVehicleHelicopter::sSettings.Disp911Report, 0.0f,   1.0f,    true,  NULL, AIVehicleHelicopter::sSettings.HeatDisp911Report },
+        { "Helicopter:Bounty",                  &AIVehicleHelicopter::sSettings.Bounty,                  NULL,                                          0.0f,   100000000.0f, true },
         { "Helicopter:HeliSheet",               NULL,                                                    &HeliSheet::sSettings.HeliSheet,               0.0f,   1.0f,    false },
-        { "Helicopter:IgnoreHeliSheetDistance", &HeliSheet::sSettings.IgnoreHeliSheetDistance,           NULL,                                          0.0f,   2000.0f, false },
+        { "Helicopter:IgnoreHeliSheetDistance", &HeliSheet::sSettings.IgnoreHeliSheetDistance,           NULL,                                          0.0f,   2000.0f, true },
         { "Helicopter:FlySpeed",                &AIActionHeliExit::sSettings.FlySpeed,                   NULL,                                          40.0f,  220.0f,  true },
     };
 
     #define SETTING_COUNT                    ((int)(sizeof(kSettings) / sizeof(kSettings[0])))
+
+    const TextSetting kTextSettings[] = {
+        { "Helicopter:Pvehicle", AIVehicleHelicopter::sSettings.Pvehicle, true },
+    };
+
+    #define TEXT_SETTING_COUNT               ((int)(sizeof(kTextSettings) / sizeof(kTextSettings[0])))
 
     HMODULE         gModule           = NULL;
     AIPerpVehicle*  gPlayerPerp       = NULL;
@@ -158,9 +179,9 @@ namespace {
     OriginalBytes   gJournal[MOST_JOURNAL];
     int             gJournalCount     = 0;
     Values          gValues[SETTING_COUNT];
+    TextValues      gTextValues[TEXT_SETTING_COUNT];
     int             gLevel            = -1;
     bool            gRacing           = false;
-    bool            gHaveMessage      = false;
 
     bool           IsHeatLevel(float heat);
     AIPerpVehicle* FromIPerpetrator(DWORD iperp);
@@ -181,11 +202,15 @@ namespace {
     bool           ParseFloat(const char* text, float* out);
     bool           ParseValue(const Setting& setting, const char* text, float* value);
     void           Store(int index, int level, bool race, float value);
-    float          Resolve(const Values& values, int level, bool racing);
+    float          Resolve(int index, int level, bool racing);
     void           ReadKey(const char* path, int first, int parts, const char* key, int level, bool race);
     void           ReadFile(const char* path);
-    void           ReadMessage(const char* path);
-    bool           IsSafeMessage(const char* text);
+    bool           IsName(const char* text);
+    void           StoreText(int index, int level, bool race, const char* text);
+    const char*    ResolveText(int index, int level, bool racing);
+    bool           ApplyText(int index, int level, bool racing);
+    void           ReadTextKey(const char* path, int index, const char* key, int level, bool race);
+    void           ReadTextFile(const char* path);
     bool           FileExists(const char* path);
 
 }
@@ -253,8 +278,10 @@ namespace {
         Minimap::InstallPatches();
         CameraMover::InstallPatches();
         SoundHeli::InstallPatches();
-        AIPursuit::InstallPatches();
-        PursuitBoard::InstallPatches();
+        DrawHeli::InstallPatches();
+        SoundAI::InstallPatches();
+        EAXAirSupport::InstallPatches();
+        EAXCop::InstallPatches();
         CSTATEMGR_Helicopter::InstallPatches();
         SimpleChopper::InstallPatches();
         AIActionHeliExit::InstallPatches();
@@ -266,8 +293,13 @@ namespace {
         AIVehicleHelicopter::HookRespawnTimer();
         AICopManager::HookApplyBreakerZones();
         AICopManager::HookRecycle();
+        AICopManager::HookGetAvailableCopVehicleByName();
+        AIPursuit::HookIncNumCopsDestroyed();
         EAXAirSupport::HookSetHandle();
         EAXAirSupport::HookAddNewHeli();
+        EAXAirSupport::HookScheduleSpeech();
+        SoundAI::HookSyncCarsToActors();
+        SoundAI::HookChopperLOS();
         return 0;
     }
 
@@ -459,19 +491,6 @@ namespace Patch {
         memcpy(patch->bytes + 1, &offset, sizeof(offset));
     }
 
-    void RedirectJump(const JumpSite& site, const void* replacement) {
-        PendingPatch* patch = NewPatch();
-        if (patch == NULL) return;
-        patch->guardAddress = site.address;
-        memcpy(patch->guard, site.opcode, sizeof(site.opcode));
-        DWORD original = site.target - (site.address + sizeof(site.opcode) + WORD_SIZE);
-        memcpy(patch->guard + sizeof(site.opcode), &original, sizeof(original));
-        patch->guardLength = sizeof(site.opcode) + WORD_SIZE;
-        patch->writeAddress = site.address + sizeof(site.opcode);
-        DWORD offset = (DWORD)replacement - (site.address + sizeof(site.opcode) + WORD_SIZE);
-        memcpy(patch->bytes, &offset, sizeof(offset));
-    }
-
     void RedirectVirtual(DWORD slot, DWORD function, const void* replacement) {
         PendingPatch* patch = NewPatch();
         if (patch == NULL) return;
@@ -580,6 +599,10 @@ namespace Ini {
             memset(&gValues[i], 0, sizeof(gValues[i]));
             gValues[i].vanilla = GetSetting(i);
         }
+        for (int i = 0; i < TEXT_SETTING_COUNT; ++i) {
+            memset(&gTextValues[i], 0, sizeof(gTextValues[i]));
+            strcpy_s(gTextValues[i].vanilla, sizeof(gTextValues[i].vanilla), kTextSettings[i].text);
+        }
 
         char directory[MAX_PATH] = "";
         DWORD length = GetModuleFileNameA(module, directory, MAX_PATH);
@@ -595,10 +618,11 @@ namespace Ini {
             const char* path = FileExists(inFolder) ? inFolder : (FileExists(beside) ? beside : NULL);
             if (path == NULL) continue;
             ReadFile(path);
-            ReadMessage(path);
+            ReadTextFile(path);
         }
 
-        for (int i = 0; i < SETTING_COUNT; ++i) SetSetting(i, Resolve(gValues[i], 0, false));
+        for (int i = 0; i < SETTING_COUNT; ++i) SetSetting(i, Resolve(i, 0, false));
+        for (int i = 0; i < TEXT_SETTING_COUNT; ++i) ApplyText(i, 0, false);
     }
 
     bool ApplyHeat(int level, bool racing) {
@@ -609,11 +633,13 @@ namespace Ini {
 
         int changed = 0;
         for (int i = 0; i < SETTING_COUNT; ++i) {
-            float value = Resolve(gValues[i], level, racing);
+            float value = Resolve(i, level, racing);
             if (GetSetting(i) == value) continue;
             SetSetting(i, value);
             ++changed;
         }
+        for (int i = 0; i < TEXT_SETTING_COUNT; ++i)
+            if (ApplyText(i, level, racing)) ++changed;
         return changed > 0;
     }
 
@@ -784,11 +810,14 @@ namespace {
         mask = (WORD)(mask | bit);
     }
 
-    float Resolve(const Values& values, int level, bool racing) {
+    float Resolve(int index, int level, bool racing) {
+        const Values& values = gValues[index];
         if (level >= LOWEST_HEAT && level <= HEAT_LEVELS) {
             WORD bit = (WORD)(1 << (level - 1));
             if (racing && (values.hasRace & bit)) return values.race[level - 1];
             if (values.hasHeat & bit) return values.heat[level - 1];
+            if (!values.hasBase && kSettings[index].heatDefaults != NULL) return kSettings[index].heatDefaults[level - 1];
+            if (!values.hasBase && kSettings[index].heatToggles != NULL) return (float)(kSettings[index].heatToggles[level - 1] ? 1 : 0);
         }
         return values.hasBase ? values.base : values.vanilla;
     }
@@ -820,25 +849,68 @@ namespace {
         }
     }
 
-    void ReadMessage(const char* path) {
-        if (gHaveMessage) return;
-        char text[MOST_MESSAGE_TEXT] = "";
-        GetPrivateProfileStringA(kNotificationSection, kCopHeliKey, "", text, sizeof(text), path);
-        if (text[0] == '\0' || !IsSafeMessage(text)) return;
-        PursuitBoard::SetCopHeliMessage(text);
-        gHaveMessage = true;
-    }
-
-    bool IsSafeMessage(const char* text) {
-        int numbers = 0;
-        for (const char* c = text; *c != '\0'; ++c) {
-            if (*c != '%') continue;
-            ++c;
-            if (*c == '%') continue;
-            if (*c == '$') ++c;
-            if (*c != 'd' || ++numbers > 1) return false;
+    bool IsName(const char* text) {
+        size_t length = strlen(text);
+        if (length == 0 || length >= MOST_NAME_TEXT) return false;
+        for (size_t i = 0; i < length; ++i) {
+            char c = text[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) return false;
         }
         return true;
+    }
+
+    void StoreText(int index, int level, bool race, const char* text) {
+        TextValues& values = gTextValues[index];
+        if (level == 0) {
+            if (values.hasBase) return;
+            strcpy_s(values.base, sizeof(values.base), text);
+            values.hasBase = true;
+            return;
+        }
+        WORD bit = (WORD)(1 << (level - 1));
+        WORD& mask = race ? values.hasRace : values.hasHeat;
+        if (mask & bit) return;
+        strcpy_s(race ? values.race[level - 1] : values.heat[level - 1], MOST_NAME_TEXT, text);
+        mask = (WORD)(mask | bit);
+    }
+
+    const char* ResolveText(int index, int level, bool racing) {
+        const TextValues& values = gTextValues[index];
+        if (level >= LOWEST_HEAT && level <= HEAT_LEVELS) {
+            WORD bit = (WORD)(1 << (level - 1));
+            if (racing && (values.hasRace & bit)) return values.race[level - 1];
+            if (values.hasHeat & bit) return values.heat[level - 1];
+        }
+        return values.hasBase ? values.base : values.vanilla;
+    }
+
+    bool ApplyText(int index, int level, bool racing) {
+        const char* value = ResolveText(index, level, racing);
+        char* text = kTextSettings[index].text;
+        if (strcmp(text, value) == 0) return false;
+        strcpy_s(text, MOST_NAME_TEXT, value);
+        return true;
+    }
+
+    void ReadTextKey(const char* path, int index, const char* key, int level, bool race) {
+        char text[MOST_VALUE_TEXT] = "";
+        if (GetPrivateProfileStringA(kTextSettings[index].section, key, "", text, sizeof(text), path) == 0) return;
+        Trim(text);
+        if (!IsName(text)) return;
+        StoreText(index, level, race, text);
+    }
+
+    void ReadTextFile(const char* path) {
+        for (int index = 0; index < TEXT_SETTING_COUNT; ++index) {
+            if (kTextSettings[index].hasDefault) ReadTextKey(path, index, "default", 0, false);
+            for (int level = LOWEST_HEAT; level <= HEAT_LEVELS; ++level) {
+                char key[8];
+                sprintf_s(key, sizeof(key), "heat%02d", level);
+                ReadTextKey(path, index, key, level, false);
+                sprintf_s(key, sizeof(key), "race%02d", level);
+                ReadTextKey(path, index, key, level, true);
+            }
+        }
     }
 
     bool FileExists(const char* path) {
