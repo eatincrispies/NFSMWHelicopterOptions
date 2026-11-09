@@ -325,8 +325,8 @@ AIActionHeliPursuit::Settings::Settings()
       ClosingSpeedNear(20.0f),
       ClosingSpeedMid(30.0f),
       ClosingSpeedFar(50.0f),
-      SearchSpeedMin(15.0f),
-      SearchSpeedMax(20.0f),
+      SearchSpeedMin(25.0f),
+      SearchSpeedMax(40.0f),
       SearchRadiusFirst(80.0f),
       SearchRadiusLargest(250.0f) {
 }

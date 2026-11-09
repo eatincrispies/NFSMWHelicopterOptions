@@ -3,7 +3,9 @@
 
 #define IPURSUIT_IVEHICLE_LIST           0x014
 #define IPURSUIT_IS_PLAYER_PURSUIT       0x08C
+#define IPURSUIT_SPAWN_HELI_TIMER        0x0D0
 #define IPURSUIT_SKID_HIT_ENABLED        0x11C
+#define IVEHICLEAI_GET_GOAL_NAME         0x0C0
 
 class IAIHelicopter;
 class IPursuitAI;
@@ -64,6 +66,11 @@ class IVehicleAI : public UTL::COM::IUnknown {
     virtual void EnableSimplePhysics() = 0;
     virtual void DisableSimplePhysics() = 0;
     virtual IPursuit* GetPursuit() = 0;
+
+    DWORD GetGoalName() const {
+        const DWORD* name = (const DWORD*)((PointerQuery)VirtualFunction(this, IVEHICLEAI_GET_GOAL_NAME))(this);
+        return name != NULL ? *name : 0;
+    }
 };
 
 class IPursuit : public UTL::COM::IUnknown {
@@ -89,6 +96,10 @@ class IPursuit : public UTL::COM::IUnknown {
 
     bool SkidHitEnabled() const {
         return ((BoolQuery)VirtualFunction(this, IPURSUIT_SKID_HIT_ENABLED))(this);
+    }
+
+    float GetSpawnHeliTimer() const {
+        return *(const float*)((DWORD)this + IPURSUIT_SPAWN_HELI_TIMER);
     }
 };
 

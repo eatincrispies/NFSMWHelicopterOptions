@@ -370,7 +370,7 @@ HeliSheet::Settings HeliSheet::sSettings;
 
 HeliSheet::Settings::Settings()
     : HeliSheet(true),
-      IgnoreHeliSheetDistance(0.0f) {
+      IgnoreHeliSheetDistance(200.0f) {
 }
 
 void HeliSheetCoordinate::InstallPatches() {
