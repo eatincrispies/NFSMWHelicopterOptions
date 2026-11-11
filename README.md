@@ -13,5 +13,4 @@ The settings are in `scripts\HelicopterOptions\Configuration\General.ini` and `A
 ## Credits
 
 - `Eatincrispies` (Mod creator)
-- `Fierelier` - (MinGW support)
 - `Roskler` (Mod tester)
