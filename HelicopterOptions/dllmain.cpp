@@ -157,6 +157,7 @@ namespace {
         { "Helicopter:HeliSheet",               NULL,                                                    &HeliSheet::sSettings.HeliSheet,               0.0f,   1.0f,    false },
         { "Helicopter:IgnoreHeliSheetDistance", &HeliSheet::sSettings.IgnoreHeliSheetDistance,           NULL,                                          0.0f,   2000.0f, true },
         { "Helicopter:FlySpeed",                &AIActionHeliExit::sSettings.FlySpeed,                   NULL,                                          40.0f,  220.0f,  true },
+        { "Helicopter:DebugWatchHeli",          NULL,                                                    &Camera::sSettings.DebugWatchHeli,             0.0f,   1.0f,    true },
     };
 
     #define SETTING_COUNT                    ((int)(sizeof(kSettings) / sizeof(kSettings[0])))
@@ -274,7 +275,6 @@ namespace {
         AIActionHeliPursuit::InstallPatches();
         AIVehicleHelicopter::InstallPatches();
         HeliSheetCoordinate::InstallPatches();
-        CollisionGeometry::Collections::InstallPatches();
         Minimap::InstallPatches();
         CameraMover::InstallPatches();
         SoundHeli::InstallPatches();
@@ -289,6 +289,7 @@ namespace {
         AIPerpVehicle::HookSetHeat();
         AIActionHeliPursuit::HookConstructor();
         AIVehicleHelicopter::HookOnDriving();
+        HeliSheet::HookCheckHeliSheetPush();
         AIVehicleHelicopter::HookCanSeeTarget();
         AIVehicleHelicopter::HookRespawnTimer();
         AICopManager::HookApplyBreakerZones();
