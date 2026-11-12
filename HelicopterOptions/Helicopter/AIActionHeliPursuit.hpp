@@ -134,6 +134,7 @@ class AIActionHeliPursuit {
     static void Refresh();
     static void __cdecl ConstructorEntry(Detour::Registers* registers);
     static AIActionHeliPursuit* Find(const IRigidBody* heliRigidBody);
+    static void KeepCarUpright();
 
     bool IsSkidHitting() const {
         return mPursuitMode == kSkid_Hit_Approach || mPursuitMode == kSkid_Hit_Strike;
@@ -160,8 +161,9 @@ class AIActionHeliPursuit {
     void BeginStrike();
     bool CanKeepDiving() const;
     void Dive();
-    void BounceOff(const UMath::Vector3& outward);
+    bool IsPushing() const;
     void HitCar(const UMath::Vector3& outward);
+    void PushCar();
 
     void StartSearch();
     void SetNextSearchPoint();

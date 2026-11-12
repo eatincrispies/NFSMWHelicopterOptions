@@ -44,15 +44,6 @@ namespace {
     #define EAX_COP_BACKUP_ARRIVES                 0x007186E0
     #define ARRIVAL_DELAY_MS                       4000
 
-    #define COLLECTIONS_FIND                       0x00681340
-    #define COP_HELI_COLLECTION                    0x47C914A3
-    #define BOUNDS_PRIM_VS_WORLD                   (1 << 1)
-    #define BOUNDS_PRIM_VS_OBJECTS                 (1 << 2)
-    #define BOUNDS_PRIM_VS_GROUND                  (1 << 3)
-    #define BOUNDS_BOX                             (1 << 6)
-    #define QUATERNION_ONE                         32767
-    #define HELI_COLLISION_BOUNDS                  3
-
     #define APPLY_BREAKER_ZONES                    0x0042E930
     #define UPDATE_PATROLS_RECYCLE                 0x0043182E
     #define UPDATE_PATROLS_SHOULD_RESPAWN          (0x04 + 0x12)
@@ -91,6 +82,17 @@ namespace {
 
     #define CAMERA_MOVER_CHOPPER_NOISE             0x00470A60
     #define CUBIC_CAMERA_CHOPPER_NOISE_CALL        0x0047DD7D
+    #define CAMERA_SET_CAMERA_MATRIX               0x004700D0
+    #define CUBIC_CAMERA_SET_CAMERA_MATRIX_CALL    0x0047DDFE
+    #define E_CREATE_LOOK_AT_MATRIX                0x006CF0A0
+    #define WATCH_KEY                              VK_F9
+    #define KEY_DOWN_BIT                           0x8000
+    #define WATCH_BEHIND                           16
+    #define WATCH_ABOVE                            5
+    #define WATCH_AHEAD                            8
+    #define WATCH_FOLLOW_RATE                      4
+    #define WATCH_LOOK_RATE                        8
+    #define SHORTEST_HEADING_MM                    10
 
     #define MINIMAP_UPDATE_COP_ELEMENTS            0x00579E00
     #define MINIMAP_UPDATE_ELEMENT_ART             0x005675D0
@@ -118,6 +120,8 @@ namespace {
     #define APART_STIFFNESS                        1
     #define CLOSEST_APART_MM                       10
     #define MOST_COP_VEHICLES                      64
+    #define LIFT_RATE                              8
+    #define FASTEST_LIFT                           12
     #define MOST_CALL_SIGNS                        (MOST_HELICOPTERS * 2)
 
     #define AI_VEHICLE_PURSUIT_PURSUIT_REQUEST     0x00409890
@@ -159,7 +163,8 @@ namespace {
     typedef bool        (__cdecl* GetLocationFunction)(int road, int* region, int* location);
     typedef DWORD       (__cdecl* StringToKeyFunction)(const char* name);
     typedef void        (__thiscall* EffectUpdateMethod)(void* effect, const void* world, DWORD key, float dT, float intensity, const void* extra);
-    typedef const void* (__thiscall* CollectionFindMethod)(void* collections, DWORD name);
+    typedef void        (__thiscall* SetCameraMatrixMethod)(void* camera, const bMatrix4* worldToCamera, float dT);
+    typedef void        (__cdecl* CreateLookAtFunction)(bMatrix4* matrix, bVector3* eye, bVector3* center, bVector3* up);
     typedef bool        (__thiscall* SpawnPursuitHelicopterMethod)(void* manager, IPursuit* ipursuit);
     typedef void        (__thiscall* UpdateElementArtMethod)(void* minimap, bVector2* elementPos, bVector2* elementDir, FEObject* elementArt, bool pulse);
     typedef void        (__cdecl* GetVehicleVectorsFunction)(bVector2* pos, bVector2* dir, ISimable* isimable);
@@ -208,8 +213,8 @@ namespace {
     const Patch::FloatPush    kSpawnPursuitHelicopterIncNavPosition = { 0x00426ABF, GAME_SPAWN_DISTANCE };
     const Patch::FloatOperand kCopManagerChopperDespawn             = { 0x0043180E, { 0xD9, 0x05 }, 0x00891988 };
     const Patch::ByteStore    kHidingSpotHeliStore                  = { 0x0042995C, { 0xC6, 0x86, 0x85, 0x07, 0x00, 0x00 }, 1 };
-    const Patch::CallSite     kPVehicleConstructFind                = { 0x00689A09, COLLECTIONS_FIND };
     const Patch::CallSite     kCubicCameraChopperNoise              = { CUBIC_CAMERA_CHOPPER_NOISE_CALL, CAMERA_MOVER_CHOPPER_NOISE };
+    const Patch::CallSite     kCubicCameraSetCameraMatrix           = { CUBIC_CAMERA_SET_CAMERA_MATRIX_CALL, CAMERA_SET_CAMERA_MATRIX };
     const Patch::CallSite     kUpdateUpdateCopElements              = { 0x0059DCFD, MINIMAP_UPDATE_COP_ELEMENTS };
     const Patch::IndirectCall kUpdateCopElementsIsActive            = { 0x00579E94, { 0xFF, 0x90, 0x88, 0x00, 0x00, 0x00 } };
     const Patch::CallSite     kSyncPlayersReport911                 = { REPORT_911_CALL, EAX_DISPATCH_REPORT_911 };
@@ -246,14 +251,6 @@ namespace {
     C_ASSERT(offsetof(AIVehicleHelicopter, mDustStormIntensity) == 0x7E0);
     C_ASSERT(offsetof(AIVehicleHelicopter, mHeliSheetCoord) == 0x7F0);
     C_ASSERT(offsetof(AIVehicleHelicopter, mISimpleChopper) == 0x8B0);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fFlags) == 0xE);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fHalfDimensions) == 0x10);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fNumChildren) == 0x16);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fChildIndex) == 0x1E);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fRadius) == 0x20);
-    C_ASSERT(offsetof(CollisionGeometry::Bounds, fCollection) == 0x2C);
-    C_ASSERT(sizeof(CollisionGeometry::Bounds) == 0x30);
-    C_ASSERT(sizeof(CollisionGeometry::Collection) == 0x10);
     C_ASSERT(offsetof(CSTATEMGR_Helicopter, m_CurNumStates) == 0x14);
     C_ASSERT(offsetof(CSTATEMGR_Helicopter, bIsInitialized) == 0x18);
     C_ASSERT(offsetof(FEMinList, Head) == 0x8);
@@ -303,11 +300,6 @@ namespace {
     struct HazardCall {
         bool  heard;
         float at;
-    };
-
-    struct __declspec(align(16)) HeliCollision {
-        CollisionGeometry::Collection header;
-        CollisionGeometry::Bounds     bounds[HELI_COLLISION_BOUNDS];
     };
 
     const bMatrix4 kIdentityMatrix = { { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 } };
@@ -552,7 +544,6 @@ namespace {
     int                                                    gWreckUnit         = EAXAirSupport::Type_speaker_call_sign_id_CallSign01;
     bool                                                   gWreckPending      = false;
     bool                                                   gWreckCall         = false;
-    HeliCollision                                          gHeliCollision;
     BreakerFire                                            gBreakerFires[MOST_HELICOPTERS];
     float                                                  gTopUpNext         = 0;
     const IVehicle*                                        gMinimapHelicopter = NULL;
@@ -560,6 +551,12 @@ namespace {
     ArtCopies                                              gHeliArtCopies;
     ArtCopies                                              gHeliLineOfSiteArtCopies;
     ReportSearch                                           gReportSearch;
+    IVehicle*                                              gWatchedHeli       = NULL;
+    bool                                                   gWatchKeyDown      = false;
+    bool                                                   gWatchFresh        = true;
+    UMath::Vector3                                         gWatchEye;
+    UMath::Vector3                                         gWatchLook;
+    UMath::Vector3                                         gWatchHeading;
 
     HSIMABLE__*                         OwnerHandle(const IVehicle* vehicle);
     int                                  FlyingHelicopters(HSIMABLE__** handles);
@@ -580,8 +577,11 @@ namespace {
     bool                                 HelicoptersClose();
     bool                                 HeardWithin(const HazardCall& call, float seconds);
     bool                                 LeavingNearPlayer(const IVehicle* vehicle);
-    CollisionGeometry::Bounds            MakeBox(const CollisionGeometry::Bounds& root, const short* offsetMm, const short* halfMm, WORD flags);
-    const CollisionGeometry::Collection* HeliCollisionFrom(const CollisionGeometry::Collection* original);
+    IVehicle*                            WatchedHeli();
+    IVehicle*                            NextHeli(const IVehicle* current);
+    bool                                 IsWatchable(const IVehicle* vehicle);
+    bool                                 GameHasFocus();
+    bVector3                             RenderPoint(const UMath::Vector3& point);
     float                                TimeDown(const IVehicle* vehicle);
     bool                                 MinimapShowNonPursuitCops();
     FEMinList*                           FindParentList(FEMinList& list, const FEObject* object, int depth);
@@ -591,6 +591,11 @@ namespace {
 }
 
 AIVehicleHelicopter::Settings AIVehicleHelicopter::sSettings;
+Camera::Settings              Camera::sSettings;
+
+Camera::Settings::Settings()
+    : DebugWatchHeli(false) {
+}
 
 AIVehicleHelicopter::Settings::Settings()
     : StoppingRatio(1.55f),
@@ -738,8 +743,24 @@ void AIVehicleHelicopter::UpdateHelicopterOptions() {
     gBrake.stoppingRatio = striking ? (float)NO_BRAKE_RATIO : sSettings.StoppingRatio;
     gBrake.speedScale = striking ? (float)1 : sSettings.BrakeSpeedScale;
     HeliSheet::Update(gHeli->sheet, *this, position, rigidBody->GetLinearVelocity(), pursuit);
-    if (!SimpleChopper::IsWreck(mISimpleChopper)) KeepApart(rigidBody);
+    if (!SimpleChopper::IsWreck(mISimpleChopper)) {
+        KeepApart(rigidBody);
+        KeepAboveGround(rigidBody);
+    }
     SimpleChopper::ApplySpeedCap(mISimpleChopper);
+    AIActionHeliPursuit::KeepCarUpright();
+}
+
+void AIVehicleHelicopter::KeepAboveGround(IRigidBody* rigidBody) const {
+    UMath::Vector3 position = rigidBody->GetPosition();
+    float lift = HeliSheet::GroundLift(rigidBody);
+    float rise = lift > 0 ? Smaller(lift * LIFT_RATE, FASTEST_LIFT) : 0;
+    if (HeliSheet::InsideSolid(position)) rise = Larger(rise, SimpleChopper::ClimbLimit(position, 0));
+    if (!(rise > 0)) return;
+    UMath::Vector3 velocity = rigidBody->GetLinearVelocity();
+    if (!(velocity.y < rise)) return;
+    velocity.y = rise;
+    rigidBody->SetLinearVelocity(velocity);
 }
 
 void AIVehicleHelicopter::BeginHelicopter() {
@@ -1093,22 +1114,6 @@ void EAXAirSupport::Arrive(int unit) {
     BackupArrives();
 }
 
-void CollisionGeometry::Collections::InstallPatches() {
-    Patch::Begin();
-    Patch::RedirectCall(kPVehicleConstructFind, MethodAddress(&Collections::VehicleFind));
-    Patch::Commit();
-}
-
-const CollisionGeometry::Collection* CollisionGeometry::Collections::Find(DWORD name) {
-    return (const Collection*)((CollectionFindMethod)COLLECTIONS_FIND)(this, name);
-}
-
-const CollisionGeometry::Collection* CollisionGeometry::Collections::VehicleFind(DWORD name) {
-    const Collection* found = Find(name);
-    if (found == NULL || name != COP_HELI_COLLECTION || found->fNameHash != COP_HELI_COLLECTION || found->fNumBounds != 1) return found;
-    return HeliCollisionFrom(found);
-}
-
 bool AICopManager::HookApplyBreakerZones() {
     return Detour::Install(APPLY_BREAKER_ZONES, kApplyBreakerZonesCode, sizeof(kApplyBreakerZonesCode), &ApplyBreakerZonesEntry);
 }
@@ -1413,9 +1418,54 @@ void CameraMover::InstallPatches() {
     Patch::Begin();
     Patch::RedirectCall(kCubicCameraChopperNoise, MethodAddress(&CameraMover::ChopperNoise));
     Patch::Commit();
+
+    Patch::Begin();
+    Patch::RedirectCall(kCubicCameraSetCameraMatrix, MethodAddress(&Camera::WatchHeli));
+    Patch::Commit();
 }
 
 void CameraMover::ChopperNoise(bMatrix4*, float, bool) {
+}
+
+void Camera::SetCameraMatrix(const bMatrix4* world_to_camera, float dT) {
+    ((SetCameraMatrixMethod)CAMERA_SET_CAMERA_MATRIX)(this, world_to_camera, dT);
+}
+
+void Camera::WatchHeli(const bMatrix4* world_to_camera, float dT) {
+    IVehicle* heli = WatchedHeli();
+    ISimable* simable = heli != NULL ? heli->GetSimable() : NULL;
+    IRigidBody* rigidBody = simable != NULL ? simable->GetRigidBody() : NULL;
+    if (rigidBody == NULL || !UMath::IsFinite(rigidBody->GetPosition())) {
+        SetCameraMatrix(world_to_camera, dT);
+        return;
+    }
+
+    UMath::Vector3 position = rigidBody->GetPosition();
+    UMath::Vector3 forward = UMath::Vector(0, 0, 0);
+    rigidBody->GetForwardVector(forward);
+    float flat = sqrtf(forward.x * forward.x + forward.z * forward.z);
+    if (flat > Metres(SHORTEST_HEADING_MM))
+        gWatchHeading = UMath::Vector(forward.x / flat, 0, forward.z / flat);
+    else if (gWatchFresh)
+        gWatchHeading = UMath::Vector(0, 0, 1);
+
+    UMath::Vector3 eye = position - gWatchHeading * WATCH_BEHIND + UMath::Vector(0, WATCH_ABOVE, 0);
+    UMath::Vector3 look = position + gWatchHeading * WATCH_AHEAD;
+    if (gWatchFresh || !UMath::IsFinite(gWatchEye) || !UMath::IsFinite(gWatchLook)) {
+        gWatchEye = eye;
+        gWatchLook = look;
+        gWatchFresh = false;
+    } else {
+        gWatchEye = gWatchEye + (eye - gWatchEye) * Smaller(1, Larger(0, dT) * WATCH_FOLLOW_RATE);
+        gWatchLook = gWatchLook + (look - gWatchLook) * Smaller(1, Larger(0, dT) * WATCH_LOOK_RATE);
+    }
+
+    bVector3 renderEye = RenderPoint(gWatchEye);
+    bVector3 renderLook = RenderPoint(gWatchLook);
+    bVector3 renderUp = RenderPoint(UMath::Vector(0, 1, 0));
+    bMatrix4 watch;
+    ((CreateLookAtFunction)E_CREATE_LOOK_AT_MATRIX)(&watch, &renderEye, &renderLook, &renderUp);
+    SetCameraMatrix(&watch, dT);
 }
 
 void Minimap::InstallPatches() {
@@ -1699,40 +1749,55 @@ namespace {
         return UMath::IsFinite(apart) && UMath::Dot(apart, apart) < gDespawnDistance * gDespawnDistance;
     }
 
-    CollisionGeometry::Bounds MakeBox(const CollisionGeometry::Bounds& root, const short* offsetMm, const short* halfMm, WORD flags) {
-        CollisionGeometry::Bounds box;
-        memset(&box, 0, sizeof(box));
-        box.fOrientation[3] = QUATERNION_ONE;
-        short largest = 0;
-        for (int i = 0; i < 3; ++i) {
-            box.fPosition[i] = offsetMm[i];
-            box.fHalfDimensions[i] = halfMm[i];
-            if (halfMm[i] > largest) largest = halfMm[i];
+    IVehicle* WatchedHeli() {
+        bool down = Camera::sSettings.DebugWatchHeli && (GetAsyncKeyState(WATCH_KEY) & KEY_DOWN_BIT) != 0 && GameHasFocus();
+        bool pressed = down && !gWatchKeyDown;
+        gWatchKeyDown = down;
+        if (!Camera::sSettings.DebugWatchHeli) gWatchedHeli = NULL;
+        if (gWatchedHeli != NULL && !IsWatchable(gWatchedHeli)) gWatchedHeli = NULL;
+        if (pressed) {
+            gWatchedHeli = NextHeli(gWatchedHeli);
+            gWatchFresh = true;
         }
-        box.fFlags = flags;
-        box.fPCloudIndex = -1;
-        box.fChildIndex = -1;
-        box.fRadius = Metres(largest);
-        box.fSurface = root.fSurface;
-        box.fCollection = &gHeliCollision.header;
-        return box;
+        return gWatchedHeli;
     }
 
-    const CollisionGeometry::Collection* HeliCollisionFrom(const CollisionGeometry::Collection* original) {
-        const CollisionGeometry::Bounds* root = (const CollisionGeometry::Bounds*)(original + 1);
-        if (root->fNumChildren != 0) return original;
+    IVehicle* NextHeli(const IVehicle* current) {
+        const IVehicle::List& vehicles = IVehicle::AICops();
+        if (vehicles.mBegin == NULL) return NULL;
+        bool passedCurrent = current == NULL;
+        for (size_t i = 0; i < vehicles.mSize && i < MOST_COP_VEHICLES; ++i) {
+            IVehicle* vehicle = vehicles.mBegin[i];
+            if (vehicle == current) {
+                passedCurrent = true;
+                continue;
+            }
+            if (passedCurrent && IsWatchable(vehicle)) return vehicle;
+        }
+        return NULL;
+    }
 
-        gHeliCollision.header = *original;
-        gHeliCollision.header.fNumBounds = HELI_COLLISION_BOUNDS;
-        gHeliCollision.bounds[0] = *root;
-        gHeliCollision.bounds[0].fNumChildren = HELI_COLLISION_BOUNDS - 1;
-        gHeliCollision.bounds[0].fChildIndex = 1;
-        gHeliCollision.bounds[0].fCollection = &gHeliCollision.header;
-        gHeliCollision.bounds[1] = MakeBox(*root, CollisionGeometry::kHeliCabinOffsetMm, CollisionGeometry::kHeliCabinHalfMm,
-                                           BOUNDS_BOX | BOUNDS_PRIM_VS_WORLD | BOUNDS_PRIM_VS_OBJECTS | BOUNDS_PRIM_VS_GROUND);
-        gHeliCollision.bounds[2] = MakeBox(*root, CollisionGeometry::kHeliTailOffsetMm, CollisionGeometry::kHeliTailHalfMm,
-                                           BOUNDS_BOX | BOUNDS_PRIM_VS_WORLD | BOUNDS_PRIM_VS_OBJECTS);
-        return &gHeliCollision.header;
+    bool IsWatchable(const IVehicle* vehicle) {
+        const IVehicle::List& vehicles = IVehicle::AICops();
+        if (vehicle == NULL || vehicles.mBegin == NULL) return false;
+        for (size_t i = 0; i < vehicles.mSize && i < MOST_COP_VEHICLES; ++i)
+            if (vehicles.mBegin[i] == vehicle) return vehicle->IsChopper() && vehicle->IsActive();
+        return false;
+    }
+
+    bool GameHasFocus() {
+        DWORD process = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &process);
+        return process == GetCurrentProcessId();
+    }
+
+    bVector3 RenderPoint(const UMath::Vector3& point) {
+        bVector3 render;
+        render.x = point.z;
+        render.y = -point.x;
+        render.z = point.y;
+        render.w = 0;
+        return render;
     }
 
     float TimeDown(const IVehicle* vehicle) {

@@ -203,7 +203,9 @@ class TrackPathManager {
         TRACK_PATH_ZONE_TUNNEL         = 3,
         TRACK_PATH_ZONE_OVERPASS       = 4,
         TRACK_PATH_ZONE_OVERPASS_SMALL = 5,
+        TRACK_PATH_ZONE_GARAGE         = 7,
         TRACK_PATH_ZONE_HIDDEN         = 8,
+        TRACK_PATH_ZONE_DYNAMIC        = 10,
         NUM_TRACK_PATH_ZONES           = 15
     };
 
@@ -219,6 +221,7 @@ class TrackPathManager {
     }
 
     const TrackPathZone* FindCover(const bVector2& point, float height) const;
+    const TrackPathZone* FindBridge(const bVector2& point) const;
 
     int                  NumZones;
     int                  SizeofZones;
@@ -254,7 +257,12 @@ namespace HeliSheet {
 
     void Update(State& state, const AIVehicleHelicopter& heli, const UMath::Vector3& heliPosition, const UMath::Vector3& heliVelocity,
                 const AIActionHeliPursuit* pursuit);
-    bool GroundUnder(float x, float z, float top, float& groundY);
-    bool UnderCover(const UMath::Vector3& point);
+    bool GroundUnder(float x, float z, float top, float& groundY, bool& paved, const TrackPathZone** bridge);
+    bool InsideSolid(const UMath::Vector3& point);
+    float GroundLift(const IRigidBody* heli);
+    bool  TiltedNearGround(const IRigidBody* heli);
+    bool  HookCheckHeliSheetPush();
+    void  __cdecl CheckHeliSheetPushEntry(Detour::Registers* registers);
+    bool UnderCover(const UMath::Vector3& point, bool roofs);
 
 }

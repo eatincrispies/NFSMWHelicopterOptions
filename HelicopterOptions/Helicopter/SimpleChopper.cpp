@@ -1,5 +1,6 @@
 #include <math.h>
 #include "SimpleChopper.hpp"
+#include "HeliSheet.hpp"
 
 namespace {
 
@@ -20,10 +21,15 @@ namespace {
     #define MOST_WRECKS                      8
 
     #define LEVELING_RATE                    3
+    #define NEAR_GROUND_LEVELING_RATE        6
     #define FALLING_SPEED                    3
     #define LANDED_SPEED                     1
     #define NOT_FALLING_SECONDS              1
     #define LONGEST_FALL_SECONDS             6
+
+    #define CLIMB_SLOWEST                    8
+    #define CLIMB_SLOPE_PERCENT              40
+    #define ESCAPE_CLIMB                     25
 
     #define REFERENCE_FPS                    60
     #define TRACKED_SPECS                    4
@@ -195,6 +201,33 @@ void SimpleChopper::OnTaskSimulate(float dT) {
     Recover();
     ScaleFilterPair(GAME_LAST_ANG_VELOCITY_SCALE, GAME_LAST_ANG_VELOCITY_BLEND, dT * REFERENCE_FPS, &gLive.lastAngVelocityScale, &gLive.lastAngVelocityBlend);
     ((SimulateMethod)ON_TASK_SIMULATE)(this, dT);
+    LimitClimb();
+    KeepLevelNearGround();
+}
+
+void SimpleChopper::KeepLevelNearGround() {
+    if (mIrigidBody == NULL || !HeliSheet::TiltedNearGround(mIrigidBody)) return;
+    UMath::Vector3 up = UMath::Vector(0, 0, 0);
+    mIrigidBody->GetUpVector(up);
+    UMath::Vector3 spin = mIrigidBody->GetAngularVelocity();
+    UMath::Vector3 level = up * UMath::Dot(spin, up) + UMath::Cross(up, UMath::Vector(0, 1, 0)) * NEAR_GROUND_LEVELING_RATE;
+    if (!UMath::IsFinite(level)) return;
+    mIrigidBody->SetAngularVelocity(level);
+}
+
+void SimpleChopper::LimitClimb() {
+    if (mIrigidBody == NULL) return;
+    UMath::Vector3 velocity = mIrigidBody->GetLinearVelocity();
+    if (!UMath::IsFinite(velocity)) return;
+    float limit = ClimbLimit(mIrigidBody->GetPosition(), sqrtf(velocity.x * velocity.x + velocity.z * velocity.z));
+    if (!(velocity.y > limit)) return;
+    velocity.y = limit;
+    mIrigidBody->SetLinearVelocity(velocity);
+}
+
+float SimpleChopper::ClimbLimit(const UMath::Vector3& position, float flatSpeed) {
+    if (HeliSheet::InsideSolid(position)) return ESCAPE_CLIMB;
+    return Larger(CLIMB_SLOWEST, flatSpeed * Fraction(CLIMB_SLOPE_PERCENT));
 }
 
 bool SimpleChopper::IsDestroyed() const {

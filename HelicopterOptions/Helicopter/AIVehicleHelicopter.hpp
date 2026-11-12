@@ -225,6 +225,7 @@ class AIVehicleHelicopter {
     void UpdateHelicopterOptions();
     void BeginHelicopter();
     void KeepApart(IRigidBody* rigidBody) const;
+    void KeepAboveGround(IRigidBody* rigidBody) const;
     void AvoidCameraHook(UMath::Vector3& dest);
 
     unsigned char       mBehavior[0x34];
@@ -373,45 +374,6 @@ class EAXCop {
     bool OpensFor911();
     void ReportOffroad(unsigned int id, bool subsequent);
 };
-
-namespace CollisionGeometry {
-
-    struct Bounds {
-        short       fOrientation[4];
-        short       fPosition[3];
-        WORD        fFlags;
-        short       fHalfDimensions[3];
-        BYTE        fNumChildren;
-        signed char fPCloudIndex;
-        short       fPivot[3];
-        short       fChildIndex;
-        float       fRadius;
-        DWORD       fSurface;
-        DWORD       fNameHash;
-        const void* fCollection;
-    };
-
-    struct Collection {
-        DWORD fNameHash;
-        int   fNumBounds;
-        int   fIsResolved;
-        int   fPad;
-    };
-
-    const short kHeliCabinOffsetMm[3] = { 0, 212, 1175 };
-    const short kHeliCabinHalfMm[3]   = { 1000, 1100, 2250 };
-    const short kHeliTailOffsetMm[3]  = { 0, 707, -3775 };
-    const short kHeliTailHalfMm[3]    = { 500, 950, 2500 };
-
-    class Collections {
-      public:
-        static void InstallPatches();
-
-        const Collection* Find(DWORD name);
-        const Collection* VehicleFind(DWORD name);
-    };
-
-}
 
 class AIPursuit {
   public:
@@ -631,6 +593,20 @@ class CameraMover {
     static void InstallPatches();
 
     void ChopperNoise(bMatrix4* world_to_camera, float f_scale, bool useWorldTimer);
+};
+
+class Camera {
+  public:
+    struct Settings {
+        Settings();
+
+        bool DebugWatchHeli;
+    };
+
+    static Settings sSettings;
+
+    void SetCameraMatrix(const bMatrix4* world_to_camera, float dT);
+    void WatchHeli(const bMatrix4* world_to_camera, float dT);
 };
 
 class Minimap {

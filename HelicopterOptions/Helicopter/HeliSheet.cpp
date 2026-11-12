@@ -4,6 +4,7 @@
 #include "HeliSheet.hpp"
 #include "AIActionHeliPursuit.hpp"
 #include "AIVehicleHelicopter.hpp"
+#include "SimpleChopper.hpp"
 
 namespace {
 
@@ -13,12 +14,18 @@ namespace {
     #define FILTER_HELI_ALTITUDE_CALL         0x004099A6
     #define CHECK_HELI_SHEET_SMOOTHING_CALL   0x00417514
     #define CHECK_HELI_SHEET_WORKING_POS_CALL 0x004175FC
+    #define CHECK_HELI_SHEET_PUSH             0x0041776F
+    #define PUSHED_VELOCITY_ARGUMENT          0x04
 
     #define RETURN_PERCENT                    80
     #define ROAD_CLEARANCE                    1
+    #define GROUND_CLEARANCE                  5
     #define FACE_TOLERANCE_MM                 25
     #define ABOVE_SHEET                       1
     #define ABOVE_COVER                       1
+    #define ABOVE_BRIDGE                      5
+    #define INSIDE_TOLERANCE                  1
+    #define ROOF_ABOVE_CAR                    2
     #define ROAD_PIECE_LENGTH                 4
     #define MOST_ROAD_PIECES                  48
     #define ROAD_CELL                         32
@@ -36,11 +43,12 @@ namespace {
     #define CELL_KEY_MASK                     0xFFFF
     #define NEW_CELLS_PER_UPDATE              40
     #define BODY_CLEARANCE                    6
+    #define CABIN_CLEARANCE                   3
     #define BODY_CLEARANCE_POINTS             8
     #define CLIMB_PERCENT                     40
     #define FULL_HEIGHT_DISTANCE              6
-    #define LOOK_AHEAD_SECONDS                3
-    #define LONGEST_LOOK_AHEAD                120
+    #define LOOK_AHEAD_MS                     1500
+    #define LONGEST_LOOK_AHEAD                60
     #define LONGEST_DEST_LOOK                 80
     #define PAST_DEST                         6
     #define LOOK_STEP                         2
@@ -48,10 +56,15 @@ namespace {
     #define FLAT_FACE_LIMIT                   10000
     #define HALF_CELL_PERCENT                 50
     #define DEFAULT_SURFACE                   0
+    #define LOW_POINTS_CHECK_HEIGHT           10
+    #define GROUND_MARGIN_MM                  400
+    #define PROBE_ABOVE_MM                    1000
 
     #define RADIANS_PER_TURN                  6.28318530718f
 
     typedef float (__thiscall* GetElevationMethod)(void* coord, const bVector2* point, bVector3* normalOut, bool* pointValid);
+
+    const BYTE kCheckHeliSheetPushCode[] = { 0x8B, 0x06, 0xFF, 0x50, 0x60 };
 
     const Patch::CallSite kFilterHeliAltitude       = { FILTER_HELI_ALTITUDE_CALL, HELI_SHEET_GET_ELEVATION };
     const Patch::CallSite kCheckHeliSheetSmoothing  = { CHECK_HELI_SHEET_SMOOTHING_CALL, HELI_SHEET_GET_ELEVATION };
@@ -59,6 +72,13 @@ namespace {
 
     const int kCoverZones[] = {
         TrackPathManager::TRACK_PATH_ZONE_TUNNEL,
+        TrackPathManager::TRACK_PATH_ZONE_OVERPASS,
+        TrackPathManager::TRACK_PATH_ZONE_OVERPASS_SMALL,
+        TrackPathManager::TRACK_PATH_ZONE_GARAGE,
+        TrackPathManager::TRACK_PATH_ZONE_DYNAMIC,
+    };
+
+    const int kBridgeZones[] = {
         TrackPathManager::TRACK_PATH_ZONE_OVERPASS,
         TrackPathManager::TRACK_PATH_ZONE_OVERPASS_SMALL,
     };
@@ -73,8 +93,18 @@ namespace {
         0x52E42012,
     };
 
+    const short kLowPointsMm[][3] = {
+        { 1000, -888, 3425 },
+        { -1000, -888, 3425 },
+        { 1000, -888, -1075 },
+        { -1000, -888, -1075 },
+        { 0, -243, -6275 },
+    };
+
     #define COVER_ZONE_COUNT                  ((int)(sizeof(kCoverZones) / sizeof(kCoverZones[0])))
+    #define BRIDGE_ZONE_COUNT                 ((int)(sizeof(kBridgeZones) / sizeof(kBridgeZones[0])))
     #define ROAD_SURFACE_COUNT                ((int)(sizeof(kRoadSurfaces) / sizeof(kRoadSurfaces[0])))
+    #define LOW_POINT_COUNT                   ((int)(sizeof(kLowPointsMm) / sizeof(kLowPointsMm[0])))
 
     C_ASSERT(sizeof(bVector3) == 0x10);
     C_ASSERT(sizeof(WRoadLane) == 0x4);
@@ -330,16 +360,24 @@ namespace {
         }
 
         bool Height(float x, float z, float& height);
+        bool Height(float x, float z, float& height, bool& solid);
+        bool Top(float x, float z, float& top);
 
       private:
         struct Cell {
             DWORD key;
             float height;
+            float top;
+            float sheet;
+            float bridgeElevation;
+            bool  bridge;
             bool  known;
+            bool  solid;
             bool  used;
         };
 
         Cell* Find(DWORD key, bool& found);
+        Cell* Measured(float x, float z);
         void  Clear();
         void  Measure(float x, float z, Cell& cell);
 
@@ -348,7 +386,8 @@ namespace {
         int  mNewCells;
     };
 
-    RoadIndex    gRoads;
+    RoadIndex            gRoads;
+    const TrackPathZone* gPlayerBridge = NULL;
     RoadSurfaces gRoadSurfaces;
     Course       gCourse;
     ClearanceMap gClearance;
@@ -358,8 +397,13 @@ namespace {
     __declspec(align(16)) HeliSheetCoordinate gProbe = MakeProbe();
 
     bool  GameIgnoresDuringSkidHit(const AIActionHeliPursuit* pursuit);
+    bool  IsSwooping(const AIActionHeliPursuit* pursuit);
     bool  IsOutOfRange(bool farFromTarget, const UMath::Vector3& heliPosition);
-    bool  FindGround(float x, float z, float top, bool pavedOnly, float& groundY);
+    bool  FindGround(float x, float z, float top, float& groundY, bool& paved, const TrackPathZone** bridge);
+    bool  PlayerOnBridgeAt(float x, float z);
+    float AboveBridge(float top, float bridgeElevation);
+    bool  SurfaceBelow(float x, float z, float top, float& groundY);
+    void  MeasureLowPoints(const IRigidBody* heli, float& levelLift, float& tiltedLift);
     void  RaiseAlong(float& highest, float x, float z, const UMath::Vector3& from, float dirX, float dirZ, float length);
     float Clearance(const HeliSheetCoordinate* coord, float x, float z);
     float CellCentre(int cell);
@@ -391,6 +435,20 @@ bool TrackPathZone::IsPointInside(const bVector2& point) const {
         if ((a.y > point.y) != (b.y > point.y) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
     }
     return inside;
+}
+
+const TrackPathZone* TrackPathManager::FindBridge(const bVector2& point) const {
+    if (pZones == NULL) return NULL;
+    for (int i = 0; i < BRIDGE_ZONE_COUNT; ++i) {
+        int type = kBridgeZones[i];
+        const ZoneInfo& info = ZoneInfoTable[type];
+        if (info.NumZones <= 0 || info.pFirstZone == NULL) continue;
+        for (const TrackPathZone* zone = info.pFirstZone; zone < info.pLastZone; zone = zone->GetMemoryImageNext()) {
+            if (zone->MemoryImageSize <= 0) break;
+            if (zone->Type == type && zone->IsPointInside(point)) return zone;
+        }
+    }
+    return NULL;
 }
 
 const TrackPathZone* TrackPathManager::FindCover(const bVector2& point, float height) const {
@@ -428,9 +486,16 @@ float HeliSheetCoordinate::RoadElevation(const bVector2& point, bVector3* normal
     float x = -point.y;
     float z = point.x;
     float groundY = 0;
-    bool onGround = HeliSheet::GroundUnder(x, z, elevation, groundY);
+    bool paved = false;
+    const TrackPathZone* bridge = NULL;
+    bool onGround = HeliSheet::GroundUnder(x, z, elevation, groundY, paved, &bridge);
+    if (onGround && bridge != NULL && !PlayerOnBridgeAt(x, z)) {
+        groundY = AboveBridge(groundY, bridge->Elevation);
+        paved = true;
+    }
     float clearance = Clearance(this, x, z);
-    float lowest = Larger(onGround ? Smaller(elevation, groundY + ROAD_CLEARANCE) : elevation, clearance);
+    float groundFloor = onGround ? Smaller(elevation, groundY + (paved ? ROAD_CLEARANCE : GROUND_CLEARANCE)) : elevation;
+    float lowest = Larger(groundFloor, clearance);
 
     if (lowest < elevation && normalOut != NULL) {
         normalOut->x = 0;
@@ -441,18 +506,58 @@ float HeliSheetCoordinate::RoadElevation(const bVector2& point, bVector3* normal
     return lowest;
 }
 
-bool HeliSheet::GroundUnder(float x, float z, float top, float& groundY) {
-    return FindGround(x, z, top, true, groundY);
+bool HeliSheet::HookCheckHeliSheetPush() {
+    return Detour::Install(CHECK_HELI_SHEET_PUSH, kCheckHeliSheetPushCode, sizeof(kCheckHeliSheetPushCode), &CheckHeliSheetPushEntry);
 }
 
-bool HeliSheet::UnderCover(const UMath::Vector3& point) {
-    return TrackPathManager::Get().FindCover(MakePoint(point.z, -point.x), point.y) != NULL;
+void __cdecl HeliSheet::CheckHeliSheetPushEntry(Detour::Registers* registers) {
+    IRigidBody* rigidBody = (IRigidBody*)registers->esi;
+    DWORD pushedAddress = 0;
+    UMath::Vector3 pushed = UMath::Vector(0, 0, 0);
+    if (rigidBody == NULL || !Memory::Read(registers->esp + PUSHED_VELOCITY_ARGUMENT, &pushedAddress, sizeof(pushedAddress))
+        || !Memory::Read(pushedAddress, &pushed, sizeof(pushed)))
+        return;
+
+    UMath::Vector3 soft = rigidBody->GetLinearVelocity();
+    if (!UMath::IsFinite(soft) || !UMath::IsFinite(pushed)) return;
+    float limit = SimpleChopper::ClimbLimit(rigidBody->GetPosition(), sqrtf(soft.x * soft.x + soft.z * soft.z));
+    soft.y = Larger(soft.y, Smaller(pushed.y, limit));
+    Memory::WriteData(pushedAddress, &soft, sizeof(soft));
+}
+
+bool HeliSheet::GroundUnder(float x, float z, float top, float& groundY, bool& paved, const TrackPathZone** bridge) {
+    return FindGround(x, z, top, groundY, paved, bridge);
+}
+
+bool HeliSheet::InsideSolid(const UMath::Vector3& point) {
+    float top = 0;
+    return gClearance.Top(point.x, point.z, top) && point.y < top - INSIDE_TOLERANCE;
+}
+
+bool HeliSheet::UnderCover(const UMath::Vector3& point, bool roofs) {
+    if (TrackPathManager::Get().FindCover(MakePoint(point.z, -point.x), point.y) != NULL) return true;
+    float top = 0;
+    return roofs && gClearance.Top(point.x, point.z, top) && top > point.y + ROOF_ABOVE_CAR;
+}
+
+float HeliSheet::GroundLift(const IRigidBody* heli) {
+    float levelLift = 0;
+    float tiltedLift = 0;
+    MeasureLowPoints(heli, levelLift, tiltedLift);
+    return levelLift;
+}
+
+bool HeliSheet::TiltedNearGround(const IRigidBody* heli) {
+    float levelLift = 0;
+    float tiltedLift = 0;
+    MeasureLowPoints(heli, levelLift, tiltedLift);
+    return tiltedLift > 0 && tiltedLift > levelLift;
 }
 
 void HeliSheet::Update(State& state, const AIVehicleHelicopter& heli, const UMath::Vector3& heliPosition, const UMath::Vector3& heliVelocity,
                        const AIActionHeliPursuit* pursuit) {
     state.farFromTarget = IsOutOfRange(state.farFromTarget, heliPosition);
-    *(bool*)B_IGNORE_HELI_SHEET = !sSettings.HeliSheet || state.farFromTarget || GameIgnoresDuringSkidHit(pursuit);
+    *(bool*)B_IGNORE_HELI_SHEET = !sSettings.HeliSheet || state.farFromTarget || GameIgnoresDuringSkidHit(pursuit) || IsSwooping(pursuit);
 
     gCourse.heli = &heli;
     gCourse.position = heliPosition;
@@ -460,30 +565,55 @@ void HeliSheet::Update(State& state, const AIVehicleHelicopter& heli, const UMat
     gCourse.dest = heli.mDest + heli.mDestinationVelocity * Seconds(LEAD_POSITION_MS);
     gCourse.skidHitting = pursuit != NULL && pursuit->IsSkidHitting();
     gClearance.NewUpdate();
+
+    IRigidBody* player = GetLocalPlayerRigidBody();
+    UMath::Vector3 car = player != NULL ? player->GetPosition() : UMath::Vector(0, 0, 0);
+    gPlayerBridge = player != NULL ? TrackPathManager::Get().FindBridge(MakePoint(car.z, -car.x)) : NULL;
+    if (gPlayerBridge != NULL && !(car.y > gPlayerBridge->Elevation)) gPlayerBridge = NULL;
 }
 
 namespace {
 
     bool ClearanceMap::Height(float x, float z, float& height) {
+        bool solid = false;
+        return Height(x, z, height, solid);
+    }
+
+    bool ClearanceMap::Height(float x, float z, float& height, bool& solid) {
+        Cell* cell = Measured(x, z);
+        if (cell == NULL) return false;
+        height = cell->height;
+        if (cell->solid && cell->bridge && !PlayerOnBridgeAt(x, z))
+            height = Smaller(cell->sheet, AboveBridge(cell->top, cell->bridgeElevation) + ROAD_CLEARANCE);
+        solid = cell->solid;
+        return cell->known;
+    }
+
+    bool ClearanceMap::Top(float x, float z, float& top) {
+        Cell* cell = Measured(x, z);
+        if (cell == NULL || !cell->known || !cell->solid) return false;
+        top = cell->top;
+        return true;
+    }
+
+    ClearanceMap::Cell* ClearanceMap::Measured(float x, float z) {
         int cx = (int)floorf(x / CLEARANCE_CELL);
         int cz = (int)floorf(z / CLEARANCE_CELL);
         DWORD key = ((DWORD)cx & CELL_KEY_MASK) << 16 | ((DWORD)cz & CELL_KEY_MASK);
         bool found = false;
         Cell* cell = Find(key, found);
-        if (!found) {
-            if (mNewCells >= NEW_CELLS_PER_UPDATE) return false;
-            ++mNewCells;
-            if (mCount >= MOST_CLEARANCE_CELLS) {
-                Clear();
-                cell = Find(key, found);
-            }
-            cell->key = key;
-            cell->used = true;
-            ++mCount;
-            Measure(CellCentre(cx), CellCentre(cz), *cell);
+        if (found) return cell;
+        if (mNewCells >= NEW_CELLS_PER_UPDATE) return NULL;
+        ++mNewCells;
+        if (mCount >= MOST_CLEARANCE_CELLS) {
+            Clear();
+            cell = Find(key, found);
         }
-        height = cell->height;
-        return cell->known;
+        cell->key = key;
+        cell->used = true;
+        ++mCount;
+        Measure(CellCentre(cx), CellCentre(cz), *cell);
+        return cell;
     }
 
     ClearanceMap::Cell* ClearanceMap::Find(DWORD key, bool& found) {
@@ -502,10 +632,21 @@ namespace {
         bool valid = false;
         float sheet = gProbe.GetElevation(MakePoint(z, -x), NULL, &valid);
         cell.height = 0;
+        cell.top = 0;
+        cell.sheet = sheet;
+        cell.bridgeElevation = 0;
+        cell.bridge = false;
         cell.known = valid;
+        cell.solid = false;
         if (!valid) return;
         float groundY = 0;
-        cell.height = FindGround(x, z, sheet, false, groundY) ? Smaller(sheet, groundY + ROAD_CLEARANCE) : sheet;
+        bool paved = false;
+        const TrackPathZone* bridge = NULL;
+        cell.solid = FindGround(x, z, sheet, groundY, paved, &bridge);
+        cell.top = groundY;
+        cell.bridge = cell.solid && bridge != NULL;
+        cell.bridgeElevation = bridge != NULL ? bridge->Elevation : 0;
+        cell.height = cell.solid ? Smaller(sheet, groundY + ROAD_CLEARANCE) : sheet;
     }
 
     HeliSheetCoordinate MakeProbe() {
@@ -520,6 +661,10 @@ namespace {
         return pursuit != NULL && pursuit->IsSkidHitting() && !*(const bool*)NEVER_IGNORE_HELI_SHEET;
     }
 
+    bool IsSwooping(const AIActionHeliPursuit* pursuit) {
+        return pursuit != NULL && pursuit->IsStriking() && !pursuit->IsPerpUnderCover();
+    }
+
     bool IsOutOfRange(bool farFromTarget, const UMath::Vector3& heliPosition) {
         float ignoreDistance = HeliSheet::sSettings.IgnoreHeliSheetDistance;
         IRigidBody* playerRigidBody = ignoreDistance > 0 ? GetLocalPlayerRigidBody() : NULL;
@@ -530,24 +675,68 @@ namespace {
         return distance > limit;
     }
 
-    bool FindGround(float x, float z, float top, bool pavedOnly, float& groundY) {
+    bool FindGround(float x, float z, float top, float& groundY, bool& paved, const TrackPathZone** bridge) {
+        if (bridge != NULL) *bridge = NULL;
         float roadY = 0;
         bool onRoad = gRoads.Under(x, z, roadY);
+        paved = onRoad;
 
         WWorldPos ground(Metres(FACE_TOLERANCE_MM));
         ground.FindClosestFace(UMath::Vector(x, top + ABOVE_SHEET, z), false);
         if (ground.OnValidFace()) {
-            if (pavedOnly && !onRoad && !gRoadSurfaces.Contains(ground.GetSurface())) return false;
+            paved = onRoad || gRoadSurfaces.Contains(ground.GetSurface());
             groundY = ground.HeightAt(x, z);
         } else {
             if (!onRoad) return false;
             groundY = roadY;
         }
         const TrackPathZone* cover = TrackPathManager::Get().FindCover(MakePoint(z, -x), groundY);
-        if (cover == NULL) return true;
-        if (cover->Type == TrackPathManager::TRACK_PATH_ZONE_TUNNEL) return false;
-        groundY = Larger(groundY, cover->Elevation + ABOVE_COVER);
+        if (cover != NULL && cover->Type == TrackPathManager::TRACK_PATH_ZONE_TUNNEL) return false;
+        if (cover != NULL) groundY = Larger(groundY, cover->Elevation + ABOVE_COVER);
+        if (bridge != NULL) *bridge = TrackPathManager::Get().FindBridge(MakePoint(z, -x));
         return true;
+    }
+
+    bool PlayerOnBridgeAt(float x, float z) {
+        return gPlayerBridge != NULL && gPlayerBridge->IsPointInside(MakePoint(z, -x));
+    }
+
+    float AboveBridge(float top, float bridgeElevation) {
+        return Larger(top, bridgeElevation) + ABOVE_BRIDGE;
+    }
+
+    bool SurfaceBelow(float x, float z, float top, float& groundY) {
+        WWorldPos ground(Metres(FACE_TOLERANCE_MM));
+        ground.FindClosestFace(UMath::Vector(x, top, z), false);
+        if (ground.OnValidFace()) {
+            groundY = ground.HeightAt(x, z);
+            return groundY <= top;
+        }
+        return gRoads.Under(x, z, groundY) && groundY <= top;
+    }
+
+    void MeasureLowPoints(const IRigidBody* heli, float& levelLift, float& tiltedLift) {
+        levelLift = 0;
+        tiltedLift = 0;
+        UMath::Vector3 position = heli->GetPosition();
+        float top = position.y + Metres(PROBE_ABOVE_MM);
+        float groundY = 0;
+        if (!SurfaceBelow(position.x, position.z, top, groundY) || position.y - groundY > LOW_POINTS_CHECK_HEIGHT) return;
+
+        UMath::Vector3 right = UMath::Vector(0, 0, 0);
+        UMath::Vector3 up = UMath::Vector(0, 0, 0);
+        UMath::Vector3 forward = UMath::Vector(0, 0, 0);
+        heli->GetRightVector(right);
+        heli->GetUpVector(up);
+        heli->GetForwardVector(forward);
+
+        for (int i = 0; i < LOW_POINT_COUNT; ++i) {
+            UMath::Vector3 point = position + right * Metres(kLowPointsMm[i][0]) + up * Metres(kLowPointsMm[i][1]) + forward * Metres(kLowPointsMm[i][2]);
+            if (!SurfaceBelow(point.x, point.z, top, groundY)) continue;
+            float lowest = groundY + Metres(GROUND_MARGIN_MM);
+            tiltedLift = Larger(tiltedLift, lowest - point.y);
+            levelLift = Larger(levelLift, lowest - (position.y + Metres(kLowPointsMm[i][1])));
+        }
     }
 
     void RaiseAlong(float& highest, float x, float z, const UMath::Vector3& from, float dirX, float dirZ, float length) {
@@ -573,7 +762,10 @@ namespace {
             for (int i = 0; i < BODY_CLEARANCE_POINTS; ++i) {
                 float angle = RADIANS_PER_TURN * (float)i / (float)BODY_CLEARANCE_POINTS;
                 float height = 0;
-                if (gClearance.Height(x + BODY_CLEARANCE * cosf(angle), z + BODY_CLEARANCE * sinf(angle), height)) highest = Larger(highest, height);
+                bool solid = false;
+                if (gClearance.Height(x + BODY_CLEARANCE * cosf(angle), z + BODY_CLEARANCE * sinf(angle), height, solid) && solid)
+                    highest = Larger(highest, height);
+                if (gClearance.Height(x + CABIN_CLEARANCE * cosf(angle), z + CABIN_CLEARANCE * sinf(angle), height)) highest = Larger(highest, height);
             }
         }
         if (!ownCourse) return highest;
@@ -587,7 +779,7 @@ namespace {
         float speed = sqrtf(gCourse.velocity.x * gCourse.velocity.x + gCourse.velocity.z * gCourse.velocity.z);
         if (!skidHitting && speed > SLOWEST_LOOK_AHEAD)
             RaiseAlong(highest, x, z, gCourse.position, gCourse.velocity.x / speed, gCourse.velocity.z / speed,
-                       Smaller(speed * LOOK_AHEAD_SECONDS, LONGEST_LOOK_AHEAD));
+                       Smaller(speed * Seconds(LOOK_AHEAD_MS), LONGEST_LOOK_AHEAD));
         return highest;
     }
 

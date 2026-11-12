@@ -77,8 +77,11 @@ class SimpleChopper {
     static void RestoreSpeedCap();
     static void RestoreWrecks();
     static bool IsWreck(ISimpleChopper* ichopper);
+    static float ClimbLimit(const UMath::Vector3& position, float flatSpeed);
 
     void OnTaskSimulate(float dT);
+    void LimitClimb();
+    void KeepLevelNearGround();
     bool IsDestroyed() const;
     void Crash(float dT);
     void Recover();

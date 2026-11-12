@@ -28,7 +28,8 @@ namespace {
     #define MID_SEEK                         15
     #define NEAR_SEEK                        3
     #define SHORTEST_LEAD                    1
-    #define COVER_LOOK_AHEAD_MS              500
+    #define COVER_LOOK_AHEAD_MS              1600
+    #define COVER_LOOK_STEP_MS               200
 
     #define SKID_HIT_NOT_YET_MS              (-4900)
     #define APPROACH_LEAD_MS                 230
@@ -47,7 +48,8 @@ namespace {
     #define LINE_UP_DISTANCE                 5
     #define STRIKE_HEIGHT_MM                 450
     #define SWEEP_HEIGHT_MM                  1500
-    #define CONTACT_OVERLAP_MM               150
+    #define TOUCH_REACH_MM                   300
+    #define BOX_AXES                         3
     #define AFTER_HIT_MS                     300
     #define BOUNCE_SIDE                      6
     #define BOUNCE_HEIGHT                    3
@@ -59,10 +61,15 @@ namespace {
     #define TIME_BETWEEN_SKID_HIT_ATTEMPTS   5
     #define STRATEGY_CHOICES                 2
 
-    #define IMPACT_SPEED_LOSS_PERCENT        100
-    #define IMPACT_KNOCK                     24
-    #define IMPACT_FLIP_DEGREES              720
-    #define SHORTEST_FLIP_AXIS_MM            1
+    #define IMPACT_SPEED_LOSS_PERCENT        30
+    #define IMPACT_KNOCK                     15
+    #define UPRIGHT_HOLD_MS                  1200
+    #define UPRIGHT_SPIN_DEGREES             45
+    #define PUSH_MS                          1200
+    #define PUSH_SPEED                       8
+    #define PUSH_SPEED_LOSS_PERCENT          24
+    #define PUSH_LOST_DISTANCE               15
+    #define PUSH_HOLD_RATE                   5
 
     #define LONGEST_CLOCK_STEP_SECONDS       1
     #define SEARCH_NEXT_POINT_RANGE          30
@@ -175,6 +182,8 @@ namespace {
               strikeStart(0),
               strikeClock(0),
               lastStrikeTime(0),
+              pushUntil(0),
+              pushCap(0),
               searchRadius(STARTING_SEARCH_RADIUS),
               searchSpeed(STARTING_SEARCH_SPEED),
               searchDirection(1),
@@ -188,6 +197,8 @@ namespace {
               hoverEnd(NOT_HOVERING),
               hoverLookAngle(0) {
             hoverPoint = UMath::Vector(0, 0, 0);
+            pushAway = UMath::Vector(0, 0, 0);
+            pushOffset = UMath::Vector(0, 0, 0);
         }
 
         int            place;
@@ -200,6 +211,10 @@ namespace {
         float          strikeStart;
         float          strikeClock;
         float          lastStrikeTime;
+        float          pushUntil;
+        float          pushCap;
+        UMath::Vector3 pushAway;
+        UMath::Vector3 pushOffset;
         float          searchRadius;
         float          searchSpeed;
         float          searchDirection;
@@ -280,7 +295,12 @@ namespace {
         float  mLeadSince;
     };
 
-    LeadDistance                                 gLeadDistance;
+    struct BodyBox {
+        UMath::Vector3 axis[BOX_AXES];
+        float          half[BOX_AXES];
+    };
+
+    LeadDistance                                gLeadDistance;
     ClosingSpeed                                 gClosingSpeed;
     bool                                         gSkidKnockPatched = false;
     float                                        gSkidKnockTime    = 0;
@@ -296,6 +316,8 @@ namespace {
     const TrackPathZone*                         gVisitedSpots[MOST_VISITED_SPOTS];
     int                                          gNextVisitedSpot  = 0;
     DWORD                                        gRandomState      = RANDOM_SEED;
+    IRigidBody*                                  gUprightCar       = NULL;
+    float                                        gUprightUntil     = 0;
 
     int            bRandom(int range);
     bool           IsAlive(const AIActionHeliPursuit* action, const IRigidBody* heliRigidBody);
@@ -312,7 +334,9 @@ namespace {
     void           MarkVisited(const TrackPathZone* zone);
     bool           FindHidingSpot(const UMath::Vector3& lastKnown, float radius, const UMath::Vector3& myPosition, UMath::Vector3& spot);
     bool           GroundUnitsDirection(IPursuit* ip, const IVehicle* heli, const UMath::Vector3& lastKnown, float& x, float& z);
-    UMath::Vector3 MetresOf(const short* millimetres);
+    BodyBox        BoxOf(const IRigidBody* body);
+    float          Extent(const BodyBox& box, const UMath::Vector3& axis);
+    bool           BoxesTouch(const BodyBox& a, const BodyBox& b, const UMath::Vector3& apart, float reach);
 
 }
 
@@ -433,7 +457,9 @@ bool AIActionHeliPursuit::IsPerpUnderCover() const {
     if (mPlayerRigidBody == NULL) return false;
     UMath::Vector3 car = mPlayerRigidBody->GetPosition();
     const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
-    return HeliSheet::UnderCover(car) || HeliSheet::UnderCover(car + carVelocity * Seconds(COVER_LOOK_AHEAD_MS));
+    for (int ahead = 0; ahead <= COVER_LOOK_AHEAD_MS; ahead += COVER_LOOK_STEP_MS)
+        if (HeliSheet::UnderCover(car + carVelocity * Seconds(ahead), ahead == 0)) return true;
+    return false;
 }
 
 bool AIActionHeliPursuit::IsPerpReversing() const {
@@ -497,8 +523,10 @@ void AIActionHeliPursuit::StrikePerp() {
     gHeli->attacked = true;
     AdvanceClock(gHeli->strikeClock, gHeli->lastStrikeTime, mPursuitTime);
     if (mPursuitMode != kSkid_Hit_Strike) gHeli->striking = false;
-    bool keepDiving = gHeli->striking && CanKeepDiving();
+    bool pushing = gHeli->striking && IsPushing();
+    bool keepDiving = gHeli->striking && (CanKeepDiving() || pushing);
     if (keepDiving && mSkidKnockTimer < Seconds(STRIKE_HOLD_MS)) mSkidKnockTimer = Seconds(STRIKE_HOLD_MS);
+    if (pushing) mCollisionAbort = 0;
     kPursuitMode modeBefore = mPursuitMode;
     float timerBefore = mSkidKnockTimer;
 
@@ -606,53 +634,41 @@ void AIActionHeliPursuit::Dive() {
     UMath::Vector3 heli = mIRigidBody->GetPosition();
     UMath::Vector3 apart = heli - car;
 
-    UMath::Vector3 forward = UMath::Vector(0, 0, 0);
     UMath::Vector3 right = UMath::Vector(0, 0, 0);
-    UMath::Vector3 carSize = UMath::Vector(0, 0, 0);
-    mPlayerRigidBody->GetForwardVector(forward);
     mPlayerRigidBody->GetRightVector(right);
-    mPlayerRigidBody->GetDimension(carSize);
     float side = UMath::Dot(apart, right);
     UMath::Vector3 outward = right * (float)(side < 0 ? -1 : 1);
 
-    UMath::Vector3 heliForward = UMath::Vector(0, 0, 0);
-    UMath::Vector3 heliRight = UMath::Vector(0, 0, 0);
-    UMath::Vector3 heliUp = UMath::Vector(0, 0, 0);
-    mIRigidBody->GetForwardVector(heliForward);
-    mIRigidBody->GetRightVector(heliRight);
-    mIRigidBody->GetUpVector(heliUp);
-    UMath::Vector3 cabinOffset = MetresOf(CollisionGeometry::kHeliCabinOffsetMm);
-    UMath::Vector3 heliSize = MetresOf(CollisionGeometry::kHeliCabinHalfMm);
-    UMath::Vector3 cabin = heli + heliRight * cabinOffset.x + heliUp * cabinOffset.y + heliForward * cabinOffset.z - car;
-    bool touching = fabsf(UMath::Dot(cabin, right)) <= carSize.x + heliSize.x - Metres(CONTACT_OVERLAP_MM)
-                 && fabsf(UMath::Dot(cabin, forward)) <= carSize.z + heliSize.z && fabsf(cabin.y) <= carSize.y + heliSize.y;
+    bool touching = BoxesTouch(BoxOf(mIRigidBody), BoxOf(mPlayerRigidBody), apart, Metres(TOUCH_REACH_MM));
     if (!gHeli->strikeHit && touching) {
         gHeli->strikeHit = true;
         if (mSkidKnockTimer > Seconds(AFTER_HIT_MS)) mSkidKnockTimer = Seconds(AFTER_HIT_MS);
-        BounceOff(outward);
         HitCar(outward);
     }
-    if (!gHeli->sweeping && apart.y <= Metres(SWEEP_HEIGHT_MM)) gHeli->sweeping = true;
+    float lift = HeliSheet::GroundLift(mIRigidBody);
+    if (!gHeli->sweeping && (apart.y <= Metres(SWEEP_HEIGHT_MM) || lift > 0)) gHeli->sweeping = true;
 
     UMath::Vector3 target = car + carVelocity * Seconds(STRIKE_LEAD_MS);
-    if (gHeli->strikeHit) {
+    if (gHeli->strikeHit && IsPushing()) {
+        PushCar();
+        target.x += gHeli->pushOffset.x;
+        target.z += gHeli->pushOffset.z;
+        target.y = car.y + Metres(STRIKE_HEIGHT_MM);
+    } else if (gHeli->strikeHit) {
         target = target + outward * BOUNCE_SIDE;
         target.y = car.y + BOUNCE_HEIGHT;
     } else {
         target = target + mSkidHitOffset * (gHeli->sweeping ? -Fraction(STRIKE_CROSSING_PERCENT) : (float)LINE_UP_DISTANCE / SKID_HIT_SIDE);
         target.y = car.y + Metres(STRIKE_HEIGHT_MM);
     }
+    if (lift > 0) target.y = Larger(target.y, heli.y + lift);
     mIVehicleAI->SetDriveTarget(target);
 }
 
-void AIActionHeliPursuit::BounceOff(const UMath::Vector3& outward) {
-    const UMath::Vector3& carVelocity = mPlayerRigidBody->GetLinearVelocity();
-    const UMath::Vector3& heliVelocity = mIRigidBody->GetLinearVelocity();
-    float closing = -UMath::Dot(heliVelocity - carVelocity, outward);
-    if (closing <= 0) return;
-
-    UMath::Vector3 velocity = heliVelocity + outward * closing;
-    mIRigidBody->SetLinearVelocity(velocity);
+bool AIActionHeliPursuit::IsPushing() const {
+    if (!gHeli->strikeHit || gHeli->strikeClock >= gHeli->pushUntil || mPlayerRigidBody == NULL || mIRigidBody == NULL) return false;
+    UMath::Vector3 apart = mIRigidBody->GetPosition() - mPlayerRigidBody->GetPosition();
+    return UMath::Dot(apart, apart) <= PUSH_LOST_DISTANCE * PUSH_LOST_DISTANCE;
 }
 
 void AIActionHeliPursuit::HitCar(const UMath::Vector3& outward) {
@@ -663,14 +679,71 @@ void AIActionHeliPursuit::HitCar(const UMath::Vector3& outward) {
     velocity.z -= before.z * Fraction(IMPACT_SPEED_LOSS_PERCENT);
     mPlayerRigidBody->SetLinearVelocity(velocity);
 
-    UMath::Vector3 up = UMath::Vector(0, 0, 0);
-    mPlayerRigidBody->GetUpVector(up);
-    UMath::Vector3 rollAxis = UMath::Cross(up, away);
-    float rollAxisLength = sqrtf(UMath::Dot(rollAxis, rollAxis));
-    if (rollAxisLength > Metres(SHORTEST_FLIP_AXIS_MM)) {
-        UMath::Vector3 spin = mPlayerRigidBody->GetAngularVelocity() + rollAxis * (IMPACT_FLIP_DEGREES * RADIANS_PER_DEGREE / rollAxisLength);
-        mPlayerRigidBody->SetAngularVelocity(spin);
+    float flat = sqrtf(away.x * away.x + away.z * away.z);
+    gHeli->pushAway = flat > 0 ? UMath::Vector(away.x / flat, 0, away.z / flat) : UMath::Vector(0, 0, 0);
+    float across = velocity.x * gHeli->pushAway.x + velocity.z * gHeli->pushAway.z;
+    float alongX = velocity.x - gHeli->pushAway.x * across;
+    float alongZ = velocity.z - gHeli->pushAway.z * across;
+    gHeli->pushCap = sqrtf(alongX * alongX + alongZ * alongZ);
+    gHeli->pushUntil = gHeli->strikeClock + Seconds(PUSH_MS);
+    UMath::Vector3 offset = mIRigidBody->GetPosition() - mPlayerRigidBody->GetPosition();
+    gHeli->pushOffset = UMath::Vector(offset.x, 0, offset.z);
+
+    gUprightCar = mPlayerRigidBody;
+    gUprightUntil = Sim::GetTime() + Seconds(UPRIGHT_HOLD_MS);
+    KeepCarUpright();
+}
+
+void AIActionHeliPursuit::PushCar() {
+    UMath::Vector3 carVelocity = mPlayerRigidBody->GetLinearVelocity();
+    UMath::Vector3 heliVelocity = mIRigidBody->GetLinearVelocity();
+    if (!UMath::IsFinite(carVelocity) || !UMath::IsFinite(heliVelocity)) return;
+
+    const UMath::Vector3& away = gHeli->pushAway;
+    float across = carVelocity.x * away.x + carVelocity.z * away.z;
+    float alongX = carVelocity.x - away.x * across;
+    float alongZ = carVelocity.z - away.z * across;
+    float along = sqrtf(alongX * alongX + alongZ * alongZ);
+    float progress = Clamp(1 - (gHeli->pushUntil - gHeli->strikeClock) / Seconds(PUSH_MS), 0, 1);
+    float cap = gHeli->pushCap * (1 - Fraction(PUSH_SPEED_LOSS_PERCENT) * progress);
+    if (along > cap && along > 0) {
+        alongX *= cap / along;
+        alongZ *= cap / along;
     }
+    across = Larger(across, (float)PUSH_SPEED);
+    carVelocity.x = alongX + away.x * across;
+    carVelocity.z = alongZ + away.z * across;
+    mPlayerRigidBody->SetLinearVelocity(carVelocity);
+
+    UMath::Vector3 hold = mPlayerRigidBody->GetPosition() + gHeli->pushOffset - mIRigidBody->GetPosition();
+    heliVelocity.x = carVelocity.x + hold.x * PUSH_HOLD_RATE;
+    heliVelocity.z = carVelocity.z + hold.z * PUSH_HOLD_RATE;
+    mIRigidBody->SetLinearVelocity(heliVelocity);
+
+    gUprightCar = mPlayerRigidBody;
+    gUprightUntil = Sim::GetTime() + Seconds(UPRIGHT_HOLD_MS);
+}
+
+void AIActionHeliPursuit::KeepCarUpright() {
+    if (gUprightCar == NULL) return;
+    float now = Sim::GetTime();
+    if (now >= gUprightUntil || now < gUprightUntil - Seconds(UPRIGHT_HOLD_MS) || gUprightCar != GetLocalPlayerRigidBody()) {
+        gUprightCar = NULL;
+        return;
+    }
+
+    UMath::Vector3 forward = UMath::Vector(0, 0, 0);
+    UMath::Vector3 right = UMath::Vector(0, 0, 0);
+    gUprightCar->GetForwardVector(forward);
+    gUprightCar->GetRightVector(right);
+    UMath::Vector3 spin = gUprightCar->GetAngularVelocity();
+    float roll = UMath::Dot(spin, forward);
+    float pitch = UMath::Dot(spin, right);
+    float limit = UPRIGHT_SPIN_DEGREES * RADIANS_PER_DEGREE;
+    float keptRoll = Clamp(roll, -limit, limit);
+    float keptPitch = Clamp(pitch, -limit, limit);
+    if (keptRoll == roll && keptPitch == pitch) return;
+    gUprightCar->SetAngularVelocity(spin + forward * (keptRoll - roll) + right * (keptPitch - pitch));
 }
 
 void AIActionHeliPursuit::StartSearch() {
@@ -851,6 +924,33 @@ namespace {
         return from + (to - from) * t;
     }
 
+    BodyBox BoxOf(const IRigidBody* body) {
+        BodyBox box;
+        UMath::Vector3 size = UMath::Vector(0, 0, 0);
+        body->GetRightVector(box.axis[0]);
+        body->GetUpVector(box.axis[1]);
+        body->GetForwardVector(box.axis[2]);
+        body->GetDimension(size);
+        box.half[0] = size.x;
+        box.half[1] = size.y;
+        box.half[2] = size.z;
+        return box;
+    }
+
+    float Extent(const BodyBox& box, const UMath::Vector3& axis) {
+        float extent = 0;
+        for (int i = 0; i < BOX_AXES; ++i) extent += fabsf(UMath::Dot(box.axis[i], axis)) * box.half[i];
+        return extent;
+    }
+
+    bool BoxesTouch(const BodyBox& a, const BodyBox& b, const UMath::Vector3& apart, float reach) {
+        for (int i = 0; i < BOX_AXES; ++i) {
+            if (fabsf(UMath::Dot(apart, a.axis[i])) > a.half[i] + Extent(b, a.axis[i]) + reach) return false;
+            if (fabsf(UMath::Dot(apart, b.axis[i])) > b.half[i] + Extent(a, b.axis[i]) + reach) return false;
+        }
+        return true;
+    }
+
     float WrapTurn(float turn) {
         turn -= floorf(turn);
         return turn;
@@ -925,10 +1025,6 @@ namespace {
         x = sumX / length;
         z = sumZ / length;
         return true;
-    }
-
-    UMath::Vector3 MetresOf(const short* millimetres) {
-        return UMath::Vector(Metres(millimetres[0]), Metres(millimetres[1]), Metres(millimetres[2]));
     }
 
 }
